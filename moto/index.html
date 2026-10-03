@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#120a2a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FMX King" />
+  <title>FMX KING – Motocross Trick Game</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-left">
+      <div class="hud-label">SCORE</div>
+      <div id="hud-score">0</div>
+      <div class="hud-best">BEST <span id="hud-best">0</span></div>
+    </div>
+    <div class="hud-center">
+      <div id="hud-dist">0 m</div>
+      <div id="hud-streak"></div>
+    </div>
+    <div class="hud-right">
+      <div id="hud-lives"></div>
+      <button id="btn-pause" aria-label="Pause">❚❚</button>
+    </div>
+  </div>
+
+  <div id="combo" class="hidden"></div>
+  <div id="warn" class="hidden">LOSLASSEN!</div>
+  <div id="hint" class="hidden"></div>
+
+  <!-- Touch controls -->
+  <div id="controls" class="hidden">
+    <div id="pad-left">
+      <button class="ctl round" data-act="back"><span class="ico">↶</span><small>HINTEN</small></button>
+      <button class="ctl round" data-act="fwd"><span class="ico">↷</span><small>VORN</small></button>
+    </div>
+    <div id="pad-right">
+      <button class="ctl trick t-super" data-act="superman"><b>SUPERMAN</b><small>+250</small></button>
+      <button class="ctl trick t-cliff" data-act="cliff"><b>CLIFFHANGER</b><small>+500</small></button>
+      <button class="ctl trick t-can" data-act="cancan"><b>CAN-CAN</b><small>+150</small></button>
+      <button class="ctl trick t-nac" data-act="nacnac"><b>NAC-NAC</b><small>+350</small></button>
+    </div>
+  </div>
+
+  <!-- MENU -->
+  <div id="screen-menu" class="screen active">
+    <div class="menu-inner">
+      <div class="logo">
+        <div class="logo-top">MOTOCROSS FREESTYLE</div>
+        <h1>FMX <span>KING</span></h1>
+      </div>
+      <p class="tagline">Spring, dreh dich, lande sauber – je härter der Trick, desto mehr Punkte!</p>
+      <div class="menu-buttons">
+        <button id="btn-start" class="big-btn">▶ SPIELEN</button>
+        <button id="btn-howto" class="small-btn">Tricks &amp; Punkte</button>
+        <button id="btn-scores" class="small-btn">🏆 Highscores</button>
+        <button id="btn-sound" class="small-btn">🔊 Sound an</button>
+      </div>
+      <div class="menu-best">Dein Rekord: <b id="menu-best">0</b></div>
+      <div id="portrait-tip" class="tip">📱 Tipp: Handy quer halten für die beste Sicht!</div>
+    </div>
+  </div>
+
+  <!-- HOW TO -->
+  <div id="screen-howto" class="screen">
+    <div class="panel">
+      <h2>Tricks &amp; Punkte</h2>
+      <div class="howto-grid">
+        <div class="howto-col">
+          <h3>Steuerung</h3>
+          <ul class="plain">
+            <li><b>Gas</b> gibt dein Bike automatisch.</li>
+            <li><b>↶ HINTEN</b> am Boden = Wheelie, in der Luft = Backflip.</li>
+            <li><b>↷ VORN</b> in der Luft = Frontflip / Nase senken.</li>
+            <li><b>Trick-Buttons</b> in der Luft <u>gedrückt halten</u> – und <u>vor der Landung loslassen</u>!</li>
+            <li>Lande mit den Rädern auf dem Boden, sonst Crash. Du hast 3 Leben.</li>
+          </ul>
+          <p class="keys">Tastatur: ← → = Neigen · Z X C V = Tricks · P = Pause</p>
+        </div>
+        <div class="howto-col">
+          <h3>Punkte</h3>
+          <table class="ptable">
+            <tr><td>Wheelie</td><td class="st">★</td><td>30 / Sek.</td></tr>
+            <tr><td>Can-Can</td><td class="st">★</td><td>150</td></tr>
+            <tr><td>Superman</td><td class="st">★★</td><td>250</td></tr>
+            <tr><td>Nac-Nac</td><td class="st">★★★</td><td>350</td></tr>
+            <tr><td>Cliffhanger</td><td class="st">★★★★</td><td>500</td></tr>
+            <tr><td>Backflip</td><td class="st">★★★★</td><td>600</td></tr>
+            <tr><td>Frontflip</td><td class="st">★★★★★</td><td>800</td></tr>
+            <tr><td>Double Backflip</td><td class="st">★★★★★</td><td>2000</td></tr>
+            <tr><td>Double Frontflip</td><td class="st">★★★★★</td><td>2600</td></tr>
+            <tr><td>Triple Flip</td><td class="st">★★★★★</td><td>5000+</td></tr>
+          </table>
+          <p class="bonus">Kombiniere Tricks in einem Sprung für <b>Combo-Multiplikator</b>. Perfekte Landungen (+25 %) bauen deinen <b>Streak</b> auf!</p>
+        </div>
+      </div>
+      <button class="big-btn back-btn" data-goto="menu">OK</button>
+    </div>
+  </div>
+
+  <!-- HIGHSCORES -->
+  <div id="screen-scores" class="screen">
+    <div class="panel narrow">
+      <h2>🏆 Highscores</h2>
+      <div id="scores-list"></div>
+      <button class="big-btn back-btn" data-goto="menu">ZURÜCK</button>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="screen-pause" class="screen">
+    <div class="panel narrow center">
+      <h2>Pause</h2>
+      <div class="menu-buttons">
+        <button id="btn-resume" class="big-btn">▶ WEITER</button>
+        <button id="btn-restart" class="small-btn">↺ Neustart</button>
+        <button id="btn-quit" class="small-btn">Zum Menü</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="screen-over" class="screen">
+    <div class="panel center over-panel">
+      <div class="over-grid">
+        <div class="over-left">
+          <div id="over-badge" class="badge hidden">🏆 NEUER HIGHSCORE!</div>
+          <h2>Game Over</h2>
+          <div class="over-score" id="over-score">0</div>
+          <div class="over-stats" id="over-stats"></div>
+          <div class="menu-buttons row">
+            <button id="btn-retry" class="big-btn">↺ NOCHMAL</button>
+            <button id="btn-menu" class="small-btn">Menü</button>
+          </div>
+        </div>
+        <div class="over-right">
+          <h3>Top 5 · Namen antippen zum Ändern</h3>
+          <div id="over-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
