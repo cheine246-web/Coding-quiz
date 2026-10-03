@@ -1,0 +1,14 @@
+{
+  "name": "FMX King – Motocross Trick Game",
+  "short_name": "FMX King",
+  "description": "Motocross-Freestyle: Tricks, Flips und Highscores.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#120a2a",
+  "theme_color": "#120a2a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
