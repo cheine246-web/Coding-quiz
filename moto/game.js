@@ -8,7 +8,7 @@
 // ===================================================================
 // Konstanten
 // ===================================================================
-const GRAV = 600;            // px/s²
+const GRAV = 450;            // px/s²
 const WB = 84;               // Radstand
 const RW = 20;               // Radradius
 const STEP = 8;              // Terrain-Auflösung (px)
@@ -19,8 +19,6 @@ const TAU = Math.PI * 2;
 const CRASH_ANGLE = 0.95;    // rad Abweichung zur Landeschräge => Crash
 const PERFECT_ANGLE = 0.30;
 const SLOPPY_ANGLE = 0.62;
-const BIOME_LEN = 14000;
-const BIOME_BLEND = 3200;
 
 const TRICKS = {
   cancan:   { name: 'Can-Can',     pts: 150 },
@@ -64,7 +62,7 @@ const mixc = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], 
 // Speicher (Highscores)
 // ===================================================================
 const store = {
-  data: { best: 0, scores: [], muted: false, name: 'Fahrer', seenHint: false },
+  data: { tracks: {}, muted: false, name: 'Fahrer', seenHint: false, lastTrack: 'arena' },
   load() {
     try {
       const d = JSON.parse(localStorage.getItem(STORE_KEY));
@@ -74,6 +72,10 @@ const store = {
   save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(this.data)); } catch (e) { /* ignore */ }
   },
+};
+store.trackRec = function (id) {
+  if (!this.data.tracks[id]) this.data.tracks[id] = { best: 0, scores: [] };
+  return this.data.tracks[id];
 };
 store.load();
 
@@ -164,6 +166,7 @@ const sfx = (() => {
       tone(60, 0.7, 'sine', 0.3, -30, 0.05);
     },
     over() { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.28, 'triangle', 0.2, 0, i * 0.2)); },
+    crowd() { noise(0.9, 0.16, 1800); noise(0.5, 0.1, 3200, 0.1); },
     record() { [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => tone(f, 0.14, 'square', 0.1, 0, i * 0.09)); },
   };
 })();
@@ -172,42 +175,56 @@ const sfx = (() => {
 // Paletten / Biome
 // ===================================================================
 const BIOMES = [
-  { name: 'Sunset Valley', skyTop: [40, 22, 96], skyMid: [222, 70, 120], skyBot: [255, 176, 72], sun: [255, 226, 130], sunY: 0.5, stars: 0,
+  { name: 'Abend-Arena', skyTop: [40, 22, 96], skyMid: [222, 70, 120], skyBot: [255, 176, 72], sun: [255, 226, 130], sunY: 0.5, stars: 0,
     m1: [140, 58, 130], m2: [98, 40, 110], m3: [62, 28, 84], edge: [255, 184, 80], dirtTop: [190, 104, 54], dirtBot: [80, 38, 38], cloud: [255, 160, 150], tree: [60, 30, 70] },
-  { name: 'Desert Noon', skyTop: [34, 124, 232], skyMid: [110, 180, 250], skyBot: [206, 232, 255], sun: [255, 252, 214], sunY: 0.2, stars: 0,
+  { name: 'Tages-Arena', skyTop: [34, 124, 232], skyMid: [110, 180, 250], skyBot: [206, 232, 255], sun: [255, 252, 214], sunY: 0.2, stars: 0,
     m1: [214, 170, 140], m2: [186, 134, 104], m3: [152, 100, 80], edge: [246, 216, 134], dirtTop: [220, 154, 88], dirtBot: [132, 82, 50], cloud: [255, 255, 255], tree: [70, 130, 70] },
-  { name: 'Neon Night', skyTop: [6, 6, 30], skyMid: [30, 16, 80], skyBot: [118, 36, 134], sun: [225, 232, 255], sunY: 0.24, stars: 1,
+  { name: 'Nacht-Stadion', skyTop: [6, 6, 30], skyMid: [30, 16, 80], skyBot: [118, 36, 134], sun: [225, 232, 255], sunY: 0.24, stars: 1,
     m1: [52, 38, 106], m2: [34, 26, 78], m3: [20, 16, 54], edge: [0, 236, 206], dirtTop: [76, 50, 106], dirtBot: [26, 16, 46], cloud: [90, 70, 150], tree: [14, 10, 36] },
   { name: 'Jungle Dawn', skyTop: [24, 90, 120], skyMid: [140, 190, 170], skyBot: [255, 226, 160], sun: [255, 240, 190], sunY: 0.44, stars: 0,
     m1: [84, 150, 126], m2: [48, 116, 96], m3: [26, 82, 66], edge: [120, 214, 90], dirtTop: [132, 86, 52], dirtBot: [58, 34, 28], cloud: [255, 246, 220], tree: [28, 100, 56] },
 ];
 const pal = { idx: 0 };
 
-function updatePalette(x) {
-  if (!isFinite(x)) x = 0;
-  const f = Math.max(0, x) / BIOME_LEN;
-  const i = Math.floor(f);
-  const frac = f - i;
-  const bs = 1 - BIOME_BLEND / BIOME_LEN;
-  let t = frac < bs ? 0 : (frac - bs) / (1 - bs);
-  t = t * t * (3 - 2 * t);
-  const A = BIOMES[i % BIOMES.length], B = BIOMES[(i + 1) % BIOMES.length];
-  for (const k in A) {
-    if (k === 'name') continue;
-    pal[k] = Array.isArray(A[k]) ? mixc(A[k], B[k], t) : lerp(A[k], B[k], t);
-  }
-  pal.idx = t > 0.5 ? (i + 1) % BIOMES.length : i % BIOMES.length;
-  pal.name = BIOMES[pal.idx].name;
+// Jede Strecke hat ein festes Stadion-Thema (kein Überblenden mehr)
+function updatePalette() {
+  const idx = T.def ? T.def.theme : 1;
+  const th = BIOMES[idx];
+  for (const k in th) if (k !== 'name') pal[k] = th[k];
+  pal.idx = idx;
+  pal.name = th.name;
 }
 
-updatePalette(0);
+// ===================================================================
+// Strecken (Stadien) – jede Strecke ist fest und endet im Ziel
+// ===================================================================
+const START_X = 1000;   // Ende der Startgerade
+// Medaillen als Anteil am Profi-Richtwert `ref` (Punkte, die der Test-Bot mit Tricks+Flips erreicht;
+// neu messen mit `node moto/tools/calibrate.js`, wenn sich Strecke oder Physik ändern)
+const MEDAL_FRAC = { bronze: 0.25, silver: 0.55, gold: 0.9 };
+const TRACKS = [
+  { id: 'arena', name: 'Warm-up Arena', blurb: 'Weite, freundliche Rampen – zum Einfahren und Tricks üben.',
+    theme: 1, seed: 7, jumps: 14, h0: 90, h1: 170, mega: 240, v0: 480, v1: 540, doubleP: 0.15, rollerP: 0.3, stars: 1, ref: 27000 },
+  { id: 'sunset', name: 'Sunset Stadium', blurb: 'Höhere Sprünge, Doubles und Whoops im Abendlicht.',
+    theme: 0, seed: 21, jumps: 18, h0: 120, h1: 230, mega: 320, v0: 520, v1: 600, doubleP: 0.3, rollerP: 0.3, stars: 2, ref: 110000 },
+  { id: 'dome', name: 'Night Dome', blurb: 'Riesen-Rampen unter Flutlicht. Nur für echte Könige.',
+    theme: 2, seed: 99, jumps: 24, h0: 150, h1: 300, mega: 420, v0: 560, v1: 660, doubleP: 0.4, rollerP: 0.25, stars: 3, ref: 180000 },
+];
 
-// ===================================================================
-// Terrain
-// ===================================================================
-const T = { h: [0], jumps: [] };
-const progress = (x) => clamp(x / 60000, 0, 1);
-const speedTarget = (x) => 500 + 190 * progress(x);
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const T = { h: [0], jumps: [], def: null, finishX: 1e9, par: 0, medals: { bronze: 0, silver: 0, gold: 0 } };
+const speedTarget = (x) => {
+  if (!T.def) return 500;
+  return lerp(T.def.v0, T.def.v1, clamp((x - START_X) / Math.max(1, T.finishX - START_X), 0, 1));
+};
 
 function pushY(y) { T.h.push(y); }
 function pushFlat(len) {
@@ -234,40 +251,61 @@ function pushJump(H, ang, v) {
   const downLen = clamp(vx * tAir / f, 280, 1500);
   const m = Math.round(downLen / STEP);
   for (let k = 1; k <= m; k++) pushY(-H * (1 - (0.5 - 0.5 * Math.cos(Math.PI * k / m))));
-  T.jumps.push({ x: lipX, y: -H, h: H, start: startX });
+  T.jumps.push({ x: lipX, y: -H, h: H, start: startX, air: tAir, v });
 }
-function genPiece() {
-  const x = (T.h.length - 1) * STEP;
-  const p = progress(x);
-  const r = Math.random();
-  if (r < 0.2) {
-    pushRollers(Math.floor(rand(3, 6)), rand(9, 22), rand(100, 150));
-  } else if (r < 0.28) {
-    pushFlat(rand(500, 800));
-  } else {
-    let H = lerp(95, 270, Math.pow(p, 0.8)) * rand(0.85, 1.15);
-    if (Math.random() < 0.1 + 0.15 * p) H *= 1.25;
-    const ang = rand(0.68, 0.88) + 0.1 * p;
-    pushJump(H, ang, speedTarget(x));
-    if (Math.random() < 0.2 + 0.3 * p) {
-      pushFlat(rand(200, 280));
-      pushJump(H * rand(0.65, 1), rand(0.68, 0.88), speedTarget(x));
+
+function buildTrack(def) {
+  const rng = mulberry32(def.seed);
+  const r = (a, b) => a + rng() * (b - a);
+  T.h = [0]; T.jumps = []; T.def = def; T.finishX = 1e9;
+  pushFlat(START_X);
+  for (let i = 0; i < def.jumps; i++) {
+    const f = def.jumps > 1 ? i / (def.jumps - 1) : 0;
+    const v = lerp(def.v0, def.v1, f);
+    if (i > 0 && rng() < def.rollerP) {
+      pushRollers(Math.floor(r(3, 6)), r(9, 20), r(100, 150));
+      pushFlat(r(260, 360));
     }
+    const last = i === def.jumps - 1;
+    const H = last ? def.mega : lerp(def.h0, def.h1, f) * r(0.9, 1.1);
+    pushJump(H, last ? 0.9 : r(0.72, 0.86), v);
+    if (!last && rng() < def.doubleP) {
+      pushFlat(r(210, 270));
+      pushJump(H * r(0.85, 1), r(0.72, 0.86), v);
+    }
+    pushFlat(r(320, 460));
   }
-  pushFlat(rand(300, 460));
+  pushFlat(500);
+  T.finishX = (T.h.length - 1) * STEP;
+  pushFlat(1000);   // Auslauf hinter dem Ziel
+  T.par = def.ref;
+  T.medals = {
+    bronze: Math.round(def.ref * MEDAL_FRAC.bronze / 50) * 50,
+    silver: Math.round(def.ref * MEDAL_FRAC.silver / 50) * 50,
+    gold: Math.round(def.ref * MEDAL_FRAC.gold / 50) * 50,
+  };
 }
-function resetTerrain() {
-  T.h = [0];
-  T.jumps = [];
-  pushFlat(1000);
-  // Start-Sprung: klein und gnädig
-  pushJump(90, 0.78, speedTarget(0));
-  pushFlat(380);
+function trackById(id) { return TRACKS.find((t) => t.id === id) || TRACKS[0]; }
+// Medaillen-Schwellen auch für Strecken, die gerade nicht geladen sind (Strecken-Auswahl)
+const trackCache = {};
+function trackInfo(def) {
+  if (!trackCache[def.id]) {
+    const keep = { h: T.h, jumps: T.jumps, def: T.def, finishX: T.finishX, par: T.par, medals: T.medals };
+    buildTrack(def);
+    trackCache[def.id] = { par: T.par, medals: T.medals, jumps: T.jumps.length, length: T.finishX };
+    Object.assign(T, keep);
+  }
+  return trackCache[def.id];
 }
+function medalFor(score, def) {
+  const m = trackInfo(def).medals;
+  return score >= m.gold ? 3 : score >= m.silver ? 2 : score >= m.bronze ? 1 : 0;
+}
+
 function terrainY(x) {
   if (x <= 0) return 0;
   const f = x / STEP, i = f | 0;
-  while (T.h.length <= i + 2) genPiece();
+  if (i + 1 >= T.h.length) return 0;
   const t = f - i;
   return T.h[i] * (1 - t) + T.h[i + 1] * t;
 }
@@ -289,7 +327,10 @@ const game = {
   shake: 0, flash: 0,
   newRecord: false,
   runEntry: null,
+  trackId: 'arena', demoIdx: 0,
+  finishing: false, finishT: 0, finishBonus: 0, cheer: 0,
 };
+const IDLE = { back: false, fwd: false, cancan: false, superman: false, nacnac: false, cliff: false };
 
 const bike = {};
 function newStats() {
@@ -301,7 +342,7 @@ function placeBike(x) {
     mode: 'ground', px: x, x, y: 0, vx: 0, vy: 0, a: 0, w: 0,
     s: speedTarget(x) * 0.8, pitch: 0, pitchVel: 0, gAngle: 0, holdBack: 0,
     rot: 0, airT: 0, takeoffA: 0, wheelRot: 0, wheelW: 0, sus: 0, susVel: 0,
-    groundT: 0.3, wheelieT: 0, dustT: 0, lean: 0,
+    groundT: 0.3, wheelieT: 0, dustT: 0, lean: 0, lipA: 0,
     tw: { cancan: 0, superman: 0, nacnac: 0, cliff: 0 },
     th: { cancan: 0, superman: 0, nacnac: 0, cliff: 0 },
     pred: { t: 0, x, slope: 0 }, crash: null, crashT: 0, flicker: 0,
@@ -431,11 +472,11 @@ function updateParticles(dt) {
 const POSE_KEYS = ['hipx', 'hipy', 'shx', 'shy', 'hnx', 'hny', 'hfx', 'hfy', 'fnx', 'fny', 'ffx', 'ffy', 'knx', 'kny', 'enx', 'eny'];
 const mkPose = (a) => Object.fromEntries(POSE_KEYS.map((k, i) => [k, a[i]]));
 const POSES = {
-  neutral:  mkPose([-14, -38,   0, -68,   19, -52,   19, -52,   -2, -10,   -3, -10,   1, 0,   0, -1]),
-  superman: mkPose([-42, -46, -14, -62,   20, -51,   20, -51,  -96, -54,  -94, -48,   0, 1,   0, -1]),
-  cancan:   mkPose([-14, -38,   2, -66,   19, -52,   19, -52,   16, -66,   -3, -10,   0.4, -1,   0, -1]),
-  nacnac:   mkPose([-12, -38,   8, -64,   19, -52,   19, -52,  -62, -58,   -3, -10,   -0.3, -1,   0, -1]),
-  cliff:    mkPose([-24, -36, -18, -66,   20, -52,   20, -52,   18, -62,   20, -57,   1, -0.3,   0, -1]),
+  neutral:  mkPose([-15, -38,  -3, -67,   17, -56,   17, -56,   -2, -10,   -3, -10,   1, 0,   0, -1]),
+  superman: mkPose([-42, -46, -10, -62,   17, -56,   17, -56,  -96, -54,  -94, -48,   0, 1,   0, -1]),
+  cancan:   mkPose([-15, -38,   0, -66,   17, -56,   17, -56,   16, -66,   -3, -10,   0.4, -1,   0, -1]),
+  nacnac:   mkPose([-13, -38,   2, -65,   17, -56,   17, -56,  -62, -58,   -3, -10,   -0.3, -1,   0, -1]),
+  cliff:    mkPose([-24, -36, -12, -66,   17, -56,   17, -56,   18, -62,   20, -57,   1, -0.3,   0, -1]),
 };
 function computePose(tw, lean) {
   let sum = 0;
@@ -468,14 +509,16 @@ function ik(ax, ay, tx, ty, l1, l2, hx, hy) {
 }
 function solvePose(P, sy) {
   const hip = [P.hipx, P.hipy + sy], sh = [P.shx, P.shy + sy];
-  const legN = ik(hip[0], hip[1], P.fnx, P.fny + sy * 0.5, 24, 26, P.knx, P.kny);
-  const legF = ik(hip[0], hip[1], P.ffx, P.ffy + sy * 0.5, 24, 26, P.knx, P.kny);
-  const armN = ik(sh[0], sh[1], P.hnx, P.hny + sy, 20, 20, P.enx, P.eny);
-  const armF = ik(sh[0], sh[1], P.hfx, P.hfy + sy, 20, 20, P.enx, P.eny);
   const tl = Math.hypot(sh[0] - hip[0], sh[1] - hip[1]) || 1;
   const tx = (sh[0] - hip[0]) / tl, ty = (sh[1] - hip[1]) / tl;
-  const head = [sh[0] + tx * 13 + 3, sh[1] + ty * 13 - 1];
-  return { hip, sh, head, legN, legF, armN, armF, tilt: Math.atan2(tx, -ty) };
+  // Arm-Ansatz etwas unterhalb des Torso-Endes, damit der Helm den Arm nicht verdeckt
+  const root = [sh[0] - tx * 6, sh[1] - ty * 6];
+  const legN = ik(hip[0], hip[1], P.fnx, P.fny + sy * 0.5, 24, 26, P.knx, P.kny);
+  const legF = ik(hip[0], hip[1], P.ffx, P.ffy + sy * 0.5, 24, 26, P.knx, P.kny);
+  const armN = ik(root[0], root[1], P.hnx, P.hny + sy, 17, 18, P.enx, P.eny);
+  const armF = ik(root[0], root[1], P.hfx, P.hfy + sy, 17, 18, P.enx, P.eny);
+  const head = [sh[0] + tx * 15 + 4, sh[1] + ty * 15 - 1];
+  return { hip, sh, root, head, legN, legF, armN, armF, tilt: Math.atan2(tx, -ty) };
 }
 
 const COL = {
@@ -505,9 +548,29 @@ function drawLeg(c, hip, leg, far) {
   }
 }
 function drawArm(c, sh, arm, far) {
-  limb(c, [sh, arm.k, arm.e], 8, far ? COL.jerseyDark : COL.jersey);
-  c.fillStyle = COL.outline; c.beginPath(); c.arc(arm.e[0], arm.e[1], 6.2, 0, TAU); c.fill();
-  c.fillStyle = COL.glove; c.beginPath(); c.arc(arm.e[0], arm.e[1], 4.6, 0, TAU); c.fill();
+  const up = far ? '#1b46a8' : COL.jersey, fo = far ? '#16358a' : '#1c5fe0';
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  // Kontur beider Segmente zuerst, damit sich am Ellbogen keine Linien kreuzen
+  c.strokeStyle = COL.outline;
+  c.lineWidth = 14; c.beginPath(); c.moveTo(sh[0], sh[1]); c.lineTo(arm.k[0], arm.k[1]); c.stroke();
+  c.lineWidth = 12.5; c.beginPath(); c.moveTo(arm.k[0], arm.k[1]); c.lineTo(arm.e[0], arm.e[1]); c.stroke();
+  c.strokeStyle = up; c.lineWidth = 10;
+  c.beginPath(); c.moveTo(sh[0], sh[1]); c.lineTo(arm.k[0], arm.k[1]); c.stroke();
+  c.strokeStyle = fo; c.lineWidth = 8.5;
+  c.beginPath(); c.moveTo(arm.k[0], arm.k[1]); c.lineTo(arm.e[0], arm.e[1]); c.stroke();
+  if (!far) { // helle Naht am Oberarm + Ellbogenschuetzer
+    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(sh[0], sh[1]); c.lineTo((sh[0] + arm.k[0]) / 2, (sh[1] + arm.k[1]) / 2); c.stroke();
+  }
+  c.fillStyle = far ? '#14141c' : '#262633';
+  c.beginPath(); c.arc(arm.k[0], arm.k[1], 4.8, 0, TAU); c.fill();
+  // Handschuh: Manschette + Faust um den Griff
+  const ang = Math.atan2(arm.e[1] - arm.k[1], arm.e[0] - arm.k[0]);
+  c.save(); c.translate(arm.e[0], arm.e[1]); c.rotate(ang);
+  c.fillStyle = COL.outline; c.beginPath(); c.ellipse(1, 0, 8, 6.4, 0, 0, TAU); c.fill();
+  c.fillStyle = far ? '#c9a52a' : COL.glove; c.beginPath(); c.ellipse(1.5, 0, 6.6, 5, 0, 0, TAU); c.fill();
+  c.fillStyle = '#ffffff'; c.fillRect(-6, -4.6, 3, 9.2); // Manschette
+  c.restore();
 }
 function drawTorso(c, J) {
   limb(c, [J.hip, J.sh], 15, COL.jersey);
@@ -519,8 +582,9 @@ function drawTorso(c, J) {
   c.beginPath();
   c.moveTo(mx - uy / ul * 5, my + ux / ul * 5); c.lineTo(mx + uy / ul * 5, my - ux / ul * 5);
   c.stroke();
-  // Hüfte
+  // Hüfte + Schulter
   c.fillStyle = COL.pants; c.beginPath(); c.arc(J.hip[0], J.hip[1], 8, 0, TAU); c.fill();
+  c.fillStyle = COL.jersey; c.beginPath(); c.arc(J.sh[0], J.sh[1], 7.5, 0, TAU); c.fill();
 }
 function drawHelmet(c, J) {
   c.save();
@@ -628,11 +692,11 @@ function drawMoto(c, b) {
   drawWheel(c, -WB / 2, 0, b.wheelRot);
   drawWheel(c, WB / 2, 0, b.wheelRot);
   drawLeg(c, J.hip, J.legF, true);
-  drawArm(c, J.sh, J.armF, true);
+  drawArm(c, J.root, J.armF, true);
   drawBikeBody(c, b);
   drawTorso(c, J);
   drawLeg(c, J.hip, J.legN, false);
-  drawArm(c, J.sh, J.armN, false);
+  drawArm(c, J.root, J.armN, false);
   drawHelmet(c, J);
 }
 function drawRagdollRider(c, t, spin) {
@@ -643,10 +707,10 @@ function drawRagdollRider(c, t, spin) {
   P.hfx += Math.cos(t * 12) * 14; P.hfy += Math.sin(t * 10) * 10 - 8;
   const J = solvePose(P, 0);
   drawLeg(c, J.hip, J.legF, true);
-  drawArm(c, J.sh, J.armF, true);
+  drawArm(c, J.root, J.armF, true);
   drawTorso(c, J);
   drawLeg(c, J.hip, J.legN, false);
-  drawArm(c, J.sh, J.armN, false);
+  drawArm(c, J.root, J.armN, false);
   drawHelmet(c, J);
 }
 function drawCrashedBike(c, t) {
@@ -771,12 +835,14 @@ function land(b) {
     sfx.land(impact);
     if (navigator.vibrate) navigator.vibrate(impact > 400 ? 30 : 12);
     game.shake = Math.max(game.shake, clamp(impact / 700, 0.15, 0.8));
-    game.stats.jumps++;
+    if (airT > 0.55) game.stats.jumps++;
     game.stats.maxAir = Math.max(game.stats.maxAir, airT);
   }
   emitDirt(px, terrainY(px), b.vx, 0, demo ? 6 : clamp(Math.round(impact / 25), 6, 22), impact > 350);
 
   if (items.length) {
+    game.cheer = Math.min(1.6, game.cheer + 0.6);
+    if (!game.demo) sfx.crowd();
     const mult = comboMult(items.length);
     let base = 0;
     for (const it of items) base += it.pts;
@@ -812,9 +878,10 @@ function land(b) {
 function stepGround(b, dt, I) {
   b.groundT += dt;
   const sl = slopeAt(b.px), ang = Math.atan(sl);
-  const target = speedTarget(b.px);
-  b.s += (-GRAV * Math.sin(ang) * 0.3 + (target - b.s) * 1.8) * dt;
-  b.s = clamp(b.s, 150, 1000);
+  const done = game.finishing && !game.demo;
+  const target = done ? 0 : speedTarget(b.px);
+  b.s += (-GRAV * Math.sin(ang) * 0.3 + (target - b.s) * (done ? 1.2 : 1.8)) * dt;
+  b.s = clamp(b.s, done ? 0 : 150, 1000);
 
   // Wheelie-Steuerung
   if (I.back) b.holdBack += dt; else b.holdBack = Math.max(0, b.holdBack - dt * 2);
@@ -844,8 +911,15 @@ function stepGround(b, dt, I) {
   // Absprung? (Bodenbahn kruemmt sich staerker weg als die Wurfparabel)
   const yBall = oy + ovy * dt + 0.5 * GRAV * dt * dt;
   const xBall = ox + ovx * dt;
+  // Steilste Steigung, die das Vorderrad gerade verlassen hat (bestimmt die Absprungrichtung)
+  const sf = Math.atan(slopeAt(b.x + Math.cos(b.a) * WB / 2));
+  b.lipA = Math.min(sf, (b.lipA || 0) + 4 * dt);
   if (b.groundT > 0.05 && yBall < b.y - 0.6) {
-    b.vx = ovx; b.vy = ovy;
+    // Absprung entlang der Rampenkante (nicht entlang der gemittelten Radmitten-Bahn)
+    const mAng = Math.atan2(ovy, ovx);
+    const la = Math.min(mAng, b.lipA * 0.92);
+    const spd = Math.max(b.s, Math.hypot(ovx, ovy)) * 0.99;
+    b.vx = spd * Math.cos(la); b.vy = spd * Math.sin(la);
     takeoff(b, xBall, yBall);
     return;
   }
@@ -935,20 +1009,22 @@ function stepCrash(b, dt) {
   b.x = C.rider.x; b.y = C.rider.y;
   b.vx = C.rider.vx; b.vy = C.rider.vy;
   if (b.crashT > 1.7) {
-    if (game.demo) { placeBike(findSafeSpot(Math.max(C.bike.x, C.rider.x) + 200)); return; }
+    const spot = findSafeSpot(Math.max(C.bike.x, C.rider.x) + 200);
+    if (game.demo) { if (spot > T.finishX - 150) startDemo(); else placeBike(spot); return; }
     if (game.lives > 0) {
-      placeBike(findSafeSpot(Math.max(C.bike.x, C.rider.x) + 200));
+      if (spot > T.finishX - 200) { endGame('finish'); return; }   // Rest der Strecke übersprungen -> ins Ziel gerollt
+      placeBike(spot);
       bike.flicker = 1.6;
       game.streak = 0;
       updateHud(true);
-    } else endGame();
+    } else endGame('out');
   }
 }
 
 function step(dt) {
   const b = bike;
   game.time += dt;
-  const I = game.demo ? ai : input;
+  const I = game.demo ? ai : (game.finishing ? IDLE : input);
   if (game.demo) aiUpdate(b, dt);
 
   if (b.mode === 'ground') {
@@ -968,6 +1044,26 @@ function step(dt) {
     if (b.flicker > 0) b.flicker -= dt;
     if (!game.demo) game.stats.dist = Math.max(game.stats.dist, b.px / 20);
   }
+
+  // Ziel
+  if (game.demo) {
+    if (b.px > T.finishX - 60) startDemo();
+  } else if (game.state === 'play') {
+    if (!game.finishing && b.mode !== 'crash' && b.px >= T.finishX) onFinish();
+    if (game.finishing) {
+      game.finishT += dt;
+      if (game.finishT > (b.mode === 'air' ? 5 : 2.6)) endGame('finish');
+    }
+  }
+}
+
+function onFinish() {
+  game.finishing = true; game.finishT = 0;
+  el.banner.textContent = 'ZIEL!';
+  el.banner.classList.remove('hidden');
+  emitConfetti(bike.x + 260, bike.y - 120, 100);
+  game.flash = 0.35; game.cheer = 1.6;
+  sfx.record(); sfx.crowd();
 }
 
 // ===================================================================
@@ -1090,20 +1186,6 @@ function drawClouds(c, W, H) {
     c.fill();
   }
 }
-function drawMountains(c, W, H, groundSy, f, color, amp, freq, seed, sharp) {
-  const yb = lerp(H * 0.66, groundSy, f);
-  c.fillStyle = rgb(color);
-  c.beginPath(); c.moveTo(0, H);
-  const off = view.camX * f * 0.5;
-  for (let x = 0; x <= W + 12; x += 12) {
-    const wx = (x + off) * freq + seed;
-    let n = 1 - Math.abs(Math.sin(wx)) * 0.9;
-    n = n * 0.55 + (0.5 + 0.5 * Math.sin(wx * 2.3 + seed * 3)) * 0.3 + (0.5 + 0.5 * Math.sin(wx * 5.1 + seed)) * 0.15;
-    c.lineTo(x, yb - amp * Math.pow(n, sharp));
-  }
-  c.lineTo(W + 12, H); c.closePath(); c.fill();
-}
-
 // ---------- Welt ----------
 function drawTerrain(c, x0, x1, yTop, yBot) {
   const i0 = Math.floor(x0 / STEP) * STEP;
@@ -1208,23 +1290,14 @@ function drawWorldProps(c, x0, x1) {
     if (px < 700) continue;
     const sl = Math.abs(slopeAt(px));
     if (sl > 0.06 || Math.abs(slopeAt(px - 30)) > 0.08 || Math.abs(slopeAt(px + 30)) > 0.08) continue;
-    const type = Math.floor(hash(cell * 9.3) * 5);
+    if (px > T.finishX - 300) continue;
+    const type = [0, 1, 4][Math.floor(hash(cell * 9.3) * 3)];
     drawProp(c, type, px, terrainY(px) + 2, 0.9 + hash(cell * 4.4) * 0.5);
   }
-  // Start-Bogen
-  const sx = 640;
-  if (sx > x0 - 150 && sx < x1 + 150) {
-    const y = terrainY(sx);
-    c.fillStyle = '#23232f'; c.fillRect(sx - 150, y - 150, 10, 150); c.fillRect(sx + 140, y - 150, 10, 150);
-    c.fillStyle = '#ff2e93'; c.fillRect(sx - 150, y - 150, 300, 44);
-    c.fillStyle = '#fff';
-    for (let i = 0; i < 30; i++) for (let j = 0; j < 4; j++) if ((i + j) % 2 === 0) c.fillRect(sx - 150 + i * 10, y - 150 + j * 11, 10, 11);
-    c.fillStyle = '#ffd23f'; c.fillRect(sx - 150, y - 106, 300, 18);
-    c.fillStyle = '#17171f'; c.font = '900 italic 15px Arial Black, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillText('FMX KING · START', sx, y - 97);
-  }
+  drawGate(c, 640, 'FMX KING · START', x0, x1);
+  drawGate(c, T.finishX, 'ZIEL', x0, x1, true);
   // Entfernungsschilder alle 100 m
-  for (let m = Math.max(1, Math.floor(x0 / 2000)); m * 2000 < x1 + 100; m++) {
+  for (let m = Math.max(1, Math.floor(x0 / 2000)); m * 2000 < x1 + 100 && m * 2000 < T.finishX - 400; m++) {
     const x = m * 2000, y = terrainY(x);
     c.fillStyle = '#e8e8f0'; c.fillRect(x - 2, y - 56, 4, 56);
     c.fillStyle = '#ffd23f'; c.fillRect(x - 26, y - 70, 52, 24);
@@ -1250,6 +1323,158 @@ function drawWorldProps(c, x0, x1) {
     c.strokeStyle = '#eee'; c.lineWidth = 3; c.beginPath(); c.moveTo(j.x - 4, fy + 2); c.lineTo(j.x - 4, fy - 62); c.stroke();
     const w = Math.sin(game.time * 6 + j.x) * 4;
     c.fillStyle = '#ffd23f'; c.beginPath(); c.moveTo(j.x - 4, fy - 62); c.lineTo(j.x - 4 + 26, fy - 55 + w); c.lineTo(j.x - 4, fy - 46); c.closePath(); c.fill();
+  }
+}
+
+
+// ---------- Stadion ----------
+let crowdTile = null;
+function makeCrowdTile() {
+  const t = document.createElement('canvas');
+  t.width = 512; t.height = 128;
+  const g = t.getContext('2d');
+  const cols = ['#ff2e93', '#ffd23f', '#19e3ff', '#9dff3a', '#ff6a00', '#ffffff', '#7a5cff', '#ff5a5a'];
+  const skin = ['#f1c8a0', '#c68a5e', '#8d5a3a', '#ffe0c0'];
+  for (let r = 0; r < 8; r++) {
+    const y = 16 * r + 14;
+    g.fillStyle = 'rgba(0,0,0,.4)'; g.fillRect(0, 16 * r + 14, 512, 2);
+    for (let x = 0; x < 512; x += 8) {
+      if (hash(r * 91 + x * 0.37) < 0.08) continue;
+      const ox = x + (r % 2) * 4 + hash(x + r * 7) * 2;
+      g.fillStyle = cols[(hash(x * 1.7 + r * 13) * cols.length) | 0];
+      g.beginPath(); g.roundRect ? g.roundRect(ox, y - 2, 6.4, 8, 2) : g.rect(ox, y - 2, 6.4, 8); g.fill();
+      g.fillStyle = skin[(hash(x * 3.3 + r) * skin.length) | 0];
+      g.beginPath(); g.arc(ox + 3.2, y - 5.5, 2.7, 0, TAU); g.fill();
+      if (hash(x * 5.1 + r * 3) < 0.18) { // Arme hoch
+        g.strokeStyle = skin[0]; g.lineWidth = 1.2;
+        g.beginPath(); g.moveTo(ox + 1, y); g.lineTo(ox - 1, y - 8); g.moveTo(ox + 5.4, y); g.lineTo(ox + 7.4, y - 8); g.stroke();
+      }
+    }
+  }
+  crowdTile = t;
+}
+
+function drawStand(c, W, H, groundSy, u, f, hU, offU, scrollF) {
+  const yb = lerp(H * 0.7, groundSy, f) + offU * u;
+  const th = hU * u, top = yb - th;
+  const g = c.createLinearGradient(0, top, 0, yb);
+  g.addColorStop(0, rgb(mixc(pal.m2, [0, 0, 0], 0.4)));
+  g.addColorStop(1, rgb(mixc(pal.m3, [0, 0, 0], 0.25)));
+  c.fillStyle = g; c.fillRect(0, top, W, th);
+  // Publikum (4 Bänder, die beim Jubeln hüpfen)
+  const sc = th / 128, tw = 512 * sc;
+  const shift = (view.camX * scrollF * u) % tw;
+  const amp = (0.25 + game.cheer * 2.2) * u;
+  for (let band = 0; band < 4; band++) {
+    const bob = Math.sin(game.time * 5.5 + band * 1.9) * amp;
+    for (let x = -shift - tw; x < W; x += tw) {
+      c.drawImage(crowdTile, 0, band * 32, 512, 32, x, top + band * 32 * sc + bob, tw + 1, 32 * sc);
+    }
+  }
+  // Abdunklung je nach Tageszeit
+  const night = pal.stars;
+  c.fillStyle = rgb(pal.skyTop, lerp(0.1, 0.55, night) + (pal.idx === 0 ? 0.14 : 0));
+  c.fillRect(0, top, W, th);
+  // Kamerablitze
+  c.globalCompositeOperation = 'lighter';
+  for (let k = 0; k < 14; k++) {
+    const ph = game.time * (1.2 + hash(k) * 1.6) + k * 3.1;
+    if (ph % 1 > 0.12 + game.cheer * 0.08) continue;
+    const fx = hash(k * 7.7 + Math.floor(ph)) * W, fy = top + hash(k * 3.3 + Math.floor(ph)) * th;
+    c.fillStyle = 'rgba(255,255,255,.9)'; c.fillRect(fx - 1, fy - 1, 3, 3);
+    c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(fx - 4, fy, 9, 1); c.fillRect(fx, fy - 4, 1, 9);
+  }
+  c.globalCompositeOperation = 'source-over';
+  // Brüstung
+  c.fillStyle = rgb(mixc(pal.m1, [0, 0, 0], 0.3)); c.fillRect(0, yb - 3 * u, W, 3 * u);
+  c.fillStyle = rgb(pal.edge, 0.55); c.fillRect(0, top, W, 1.6 * u);
+  return top;
+}
+
+function drawStadium(c, W, H, groundSy, u) {
+  if (!crowdTile) makeCrowdTile();
+  const night = pal.stars;
+  const span = 640 * u;
+  drawStand(c, W, H, groundSy, u, 0.92, 74, -2, 0.55);
+  const topUp = drawStand(c, W, H, groundSy, u, 0.7, 82, -78, 0.35);
+  // Dach
+  const roofY = topUp - 16 * u;
+  c.fillStyle = rgb(mixc(pal.m3, [0, 0, 0], 0.55)); c.fillRect(0, roofY, W, 16 * u);
+  c.fillStyle = rgb(pal.edge, 0.7); c.fillRect(0, roofY + 14 * u, W, 2 * u);
+  c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = Math.max(1, u);
+  c.beginPath();
+  for (let x = -((view.camX * 0.3 * u) % (40 * u)); x < W; x += 40 * u) { c.moveTo(x, roofY); c.lineTo(x + 20 * u, roofY + 14 * u); c.lineTo(x + 40 * u, roofY); }
+  c.stroke();
+  // Dachlichter
+  c.fillStyle = `rgba(255,240,190,${0.35 + 0.6 * night})`;
+  for (let x = -((view.camX * 0.3 * u) % (30 * u)); x < W; x += 30 * u) c.fillRect(x, roofY + 11 * u, 6 * u, 2.5 * u);
+  // Flutlichter + Anzeigetafel auf dem Dach
+  const camP = view.camX * 0.3 * u;
+  const period = span * Math.ceil(W / span + 2);
+  for (let i = 0; i < Math.ceil(W / span) + 2; i++) {
+    const mx = (((i * span - camP) % period) + period) % period - span;
+    c.fillStyle = rgb(mixc(pal.m3, [0, 0, 0], 0.6));
+    c.fillRect(mx - 2 * u, roofY - 34 * u, 4 * u, 34 * u);
+    c.fillRect(mx - 22 * u, roofY - 52 * u, 44 * u, 20 * u);
+    c.fillStyle = `rgba(255,248,210,${0.5 + 0.5 * night})`;
+    for (let a = 0; a < 4; a++) for (let b = 0; b < 2; b++) c.fillRect(mx - 20 * u + a * 10.5 * u, roofY - 50 * u + b * 9 * u, 8.5 * u, 7 * u);
+    if (night > 0.05) {
+      const gl = c.createRadialGradient(mx, roofY - 42 * u, 2 * u, mx, roofY - 42 * u, 110 * u);
+      gl.addColorStop(0, `rgba(255,244,200,${0.55 * night})`); gl.addColorStop(1, 'rgba(255,244,200,0)');
+      c.fillStyle = gl; c.fillRect(mx - 120 * u, roofY - 160 * u, 240 * u, 240 * u);
+    }
+  }
+  // Anzeigetafel
+  const P = 1700 * u;
+  const jx = ((((900 * u - view.camX * 0.35 * u) % P) + P) % P) - 260 * u;
+  const jy = topUp + 12 * u, jw = 170 * u, jh = 62 * u;
+  c.fillStyle = '#0a0a14'; c.fillRect(jx - 4 * u, jy - 4 * u, jw + 8 * u, jh + 8 * u);
+  const sg = c.createLinearGradient(jx, jy, jx + jw, jy + jh);
+  const ph = (Math.sin(game.time * 1.4) + 1) / 2;
+  sg.addColorStop(0, rgb(mixc([25, 227, 255], [255, 46, 147], ph))); sg.addColorStop(1, rgb(mixc([255, 46, 147], [255, 210, 63], ph)));
+  c.fillStyle = sg; c.fillRect(jx, jy, jw, jh);
+  c.fillStyle = 'rgba(0,0,0,.35)';
+  for (let y = jy; y < jy + jh; y += 3 * u) c.fillRect(jx, y, jw, 1);
+  c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `900 italic ${Math.round(26 * u)}px "Arial Black", Impact, sans-serif`;
+  c.fillText('FMX KING', jx + jw / 2, jy + jh * 0.38);
+  c.font = `900 ${Math.round(10 * u)}px "Arial Black", Arial, sans-serif`;
+  const msgs = ['BIGGEST AIR', 'SUPERMAN!', 'NEW RECORD?', 'BACKFLIP!'];
+  c.fillText(msgs[Math.floor(game.time / 2) % msgs.length], jx + jw / 2, jy + jh * 0.78);
+}
+
+const AD_TEXT = ['TURBO MX', 'NITRO', 'DIRT KING', 'MOTO MAX', 'AIR TIME', 'MEGA JUMP', 'SPEED ZONE', 'FMX KING'];
+const AD_COL = ['#e8272f', '#1e6fe8', '#f2b705', '#16a34a', '#d946ef', '#f97316', '#0ea5b7', '#111827'];
+function drawBoards(c, x0, x1) {
+  const BW = 150;
+  for (let i = Math.floor(x0 / BW); i * BW < x1; i++) {
+    const x = i * BW, k = ((i % 8) + 8) % 8;
+    c.fillStyle = '#12121a'; c.fillRect(x, -40, BW, 40);
+    c.fillStyle = AD_COL[k]; c.fillRect(x + 2, -38, BW - 4, 34);
+    c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(x + 2, -38, BW - 4, 8);
+    c.fillStyle = k === 2 ? '#111' : '#fff';
+    c.font = '900 italic 18px "Arial Black", Impact, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(AD_TEXT[k], x + BW / 2, -21);
+  }
+}
+
+function drawGate(c, gx, label, x0, x1, finish) {
+  if (gx < x0 - 200 || gx > x1 + 200) return;
+  const y = terrainY(gx);
+  const w = 150;
+  c.fillStyle = '#23232f'; c.fillRect(gx - w, y - 170, 12, 170); c.fillRect(gx + w - 12, y - 170, 12, 170);
+  c.fillStyle = finish ? '#ffffff' : '#ff2e93'; c.fillRect(gx - w, y - 170, w * 2, 50);
+  if (finish) {
+    c.fillStyle = '#111';
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 5; j++) if ((i + j) % 2 === 0) c.fillRect(gx - w + i * 10, y - 170 + j * 10, 10, 10);
+  }
+  c.fillStyle = '#ffd23f'; c.fillRect(gx - w, y - 120, w * 2, 22);
+  c.fillStyle = '#17171f'; c.font = '900 italic 17px "Arial Black", Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(label, gx, y - 109);
+  if (finish) { // Zielband am Boden
+    for (let j = 0; j < 8; j++) { c.fillStyle = j % 2 ? '#111' : '#fff'; c.fillRect(gx - 5, y - 14 - j * 0, 10, 0); }
+    c.fillStyle = '#fff'; c.fillRect(gx - 6, y - 6, 12, 6);
+    c.fillStyle = '#111'; c.fillRect(gx - 6, y - 6, 6, 3); c.fillRect(gx, y - 3, 6, 3);
   }
 }
 
@@ -1328,7 +1553,7 @@ function drawBike(c, b) {
 function render(dt) {
   const c = ctx;
   const { W, H, dpr } = view;
-  updatePalette(view.camX + W / (view.scale * view.zoom) * 0.3);
+  updatePalette();
 
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const Z = view.scale * view.zoom;
@@ -1339,12 +1564,11 @@ function render(dt) {
 
   drawSky(c, W, H);
   drawClouds(c, W, H);
-  drawMountains(c, W, H, groundSy, 0.2, pal.m1, 110, 0.0042, 1.3, 1.4);
-  drawMountains(c, W, H, groundSy, 0.45, pal.m2, 90, 0.0065, 4.1, 1.2);
-  drawMountains(c, W, H, groundSy, 0.72, pal.m3, 60, 0.011, 7.7, 1.1);
+  drawStadium(c, W, H, groundSy, Z);
 
   c.setTransform(Z * dpr, 0, 0, Z * dpr, (-view.camX * Z + ox) * dpr, (-view.camY * Z + oy) * dpr);
   const x0 = view.camX - 10, x1 = view.camX + vw + 10;
+  drawBoards(c, x0, x1);
   drawTerrain(c, x0, x1, view.camY, view.camY + vh + 60);
   drawWorldProps(c, x0, x1);
   drawBikeShadow(c, bike);
@@ -1374,23 +1598,37 @@ function render(dt) {
 // HUD / UI
 // ===================================================================
 const el = {
-  hud: $('hud'), score: $('hud-score'), best: $('hud-best'), dist: $('hud-dist'), streak: $('hud-streak'), lives: $('hud-lives'),
-  combo: $('combo'), warn: $('warn'), hint: $('hint'), controls: $('controls'),
+  hud: $('hud'), score: $('hud-score'), best: $('hud-best'), goal: $('hud-goal'), dist: $('hud-dist'), bar: $('hud-bar'),
+  streak: $('hud-streak'), lives: $('hud-lives'), combo: $('combo'), warn: $('warn'), banner: $('banner'), hint: $('hint'), controls: $('controls'),
 };
 let lastHud = {};
 function popScore() {
   el.score.classList.add('pop');
   setTimeout(() => el.score.classList.remove('pop'), 140);
 }
+const MEDAL_ICON = ['', '🥉', '🥈', '🥇'];
 function updateHud(force) {
   if (game.demo) return;
   const L = lastHud;
+  const def = T.def;
   const s = Math.round(game.dispScore);
   if (force || L.score !== s) { el.score.textContent = fmt(s); L.score = s; }
-  const best = Math.max(store.data.best, Math.floor(game.score));
+  const rec = store.trackRec(def.id);
+  const best = Math.max(rec.best, Math.floor(game.score));
   if (force || L.best !== best) { el.best.textContent = fmt(best); L.best = best; }
-  const d = Math.floor(game.stats.dist);
-  if (force || L.dist !== d) { el.dist.textContent = d + ' m · ' + pal.name; L.dist = d; }
+  // nächstes Medaillen-Ziel
+  const m = trackInfo(def).medals;
+  const cur = Math.floor(game.score);
+  const goal = cur < m.bronze ? [1, m.bronze] : cur < m.silver ? [2, m.silver] : cur < m.gold ? [3, m.gold] : null;
+  const gtxt = goal ? 'ZIEL ' + MEDAL_ICON[goal[0]] + ' ' + fmt(goal[1]) : '🥇 GOLD GEHOLT!';
+  if (force || L.goal !== gtxt) { el.goal.textContent = gtxt; L.goal = gtxt; }
+  const pr = clamp(bike.px / T.finishX, 0, 1);
+  const pc = Math.floor(pr * 100);
+  if (force || L.pc !== pc) {
+    el.dist.textContent = def.name + ' · ' + pc + ' %';
+    el.bar.style.width = pc + '%';
+    L.pc = pc;
+  }
   const st = game.streak > 0 ? '🔥 STREAK ×' + streakMult().toFixed(1) : '';
   if (force || L.streak !== st) { el.streak.textContent = st; L.streak = st; }
   const lv = game.lives;
@@ -1421,18 +1659,50 @@ function updateCombo() {
 }
 
 // ---------- Screens ----------
-const screens = ['menu', 'howto', 'scores', 'pause', 'over'];
+const screens = ['menu', 'tracks', 'howto', 'scores', 'pause', 'over'];
 function showScreen(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('active', s === name);
 }
 function setPlayUI(on) {
   el.hud.classList.toggle('hidden', !on);
   el.controls.classList.toggle('hidden', !on);
-  if (!on) { el.combo.classList.add('hidden'); el.warn.classList.add('hidden'); el.hint.classList.add('hidden'); }
+  if (!on) { el.banner.classList.add('hidden'); el.combo.classList.add('hidden'); el.warn.classList.add('hidden'); el.hint.classList.add('hidden'); }
 }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+const medalsHtml = (n) => [1, 2, 3].map((i) => '<span class="mdl' + (i <= n ? ' got' : '') + '">' + MEDAL_ICON[i] + '</span>').join('');
 
-function renderScores(target, opts = {}) {
-  const list = store.data.scores.slice(0, opts.limit || 10);
+function renderTracks() {
+  let h = '';
+  for (const def of TRACKS) {
+    const info = trackInfo(def);
+    const rec = store.trackRec(def.id);
+    const th = BIOMES[def.theme];
+    h += '<button class="track-card" data-track="' + def.id + '">' +
+      '<div class="tc-sky" style="background:linear-gradient(' + rgb(th.skyTop) + ',' + rgb(th.skyMid) + ' 60%,' + rgb(th.skyBot) + ')"></div>' +
+      '<div class="tc-top"><span class="tc-name">' + def.name + '</span><span class="tc-stars">' + '★'.repeat(def.stars) + '☆'.repeat(3 - def.stars) + '</span></div>' +
+      '<div class="tc-blurb">' + def.blurb + '</div>' +
+      '<div class="tc-meta">' + info.jumps + ' Sprünge · ' + Math.round(info.length / 20) + ' m</div>' +
+      '<div class="tc-best">Best <b>' + fmt(rec.best) + '</b> ' + medalsHtml(medalFor(rec.best, def)) + '</div>' +
+      '<div class="tc-goal">🥇 ab ' + fmt(info.medals.gold) + ' · Profi ≈ ' + fmt(info.par) + '</div>' +
+      '</button>';
+  }
+  $('track-list').innerHTML = h;
+  $('track-list').querySelectorAll('.track-card').forEach((b) => b.addEventListener('click', () => { sfx.init(); sfx.click(); startGame(b.dataset.track); }));
+}
+function totalMedals() {
+  return TRACKS.reduce((n, d) => n + medalFor(store.trackRec(d.id).best, d), 0);
+}
+function updateMenuInfo() { $('menu-best').textContent = totalMedals() + ' / ' + TRACKS.length * 3; }
+
+let scoreTab = 'arena';
+function renderScoreTabs() {
+  $('score-tabs').innerHTML = TRACKS.map((d) => '<button class="tab' + (d.id === scoreTab ? ' on' : '') + '" data-track="' + d.id + '">' + d.name + '</button>').join('');
+  $('score-tabs').querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { sfx.click(); scoreTab = b.dataset.track; renderScoreTabs(); }));
+  renderScores($('scores-list'), scoreTab);
+}
+function renderScores(target, trackId, opts = {}) {
+  const rec = store.trackRec(trackId);
+  const list = rec.scores.slice(0, opts.limit || 10);
   if (!list.length) { target.innerHTML = '<div class="empty">Noch keine Einträge – fahr los!</div>'; return; }
   let h = '<table>';
   list.forEach((e, i) => {
@@ -1446,35 +1716,41 @@ function renderScores(target, opts = {}) {
   if (opts.highlight) {
     const inp = target.querySelector('#name-input');
     if (inp) inp.addEventListener('input', () => {
-      const entry = store.data.scores.find((s) => s.id === opts.highlight);
+      const entry = rec.scores.find((x) => x.id === opts.highlight);
       if (entry) { entry.name = inp.value.slice(0, 12) || 'Fahrer'; store.data.name = entry.name; store.save(); }
     });
   }
 }
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
 // ===================================================================
 // Spielablauf
 // ===================================================================
 function startDemo() {
   game.demo = true;
-  resetTerrain();
+  buildTrack(TRACKS[game.demoIdx++ % TRACKS.length]);
+  updatePalette();
   placeBike(findSafeSpot(900));
   view.zoom = 1; snapCamera();
   parts.length = 0; popups.length = 0;
 }
 
-function startGame() {
+function startGame(trackId) {
   sfx.init();
+  const def = trackById(trackId || game.trackId);
+  game.trackId = def.id;
+  store.data.lastTrack = def.id; store.save();
   input.back = input.fwd = false; TRICK_KEYS.forEach((k) => (input[k] = false)); trickOrder = [];
   document.querySelectorAll('.ctl').forEach((b) => b.classList.remove('active'));
   game.demo = false;
   game.state = 'play';
   game.score = 0; game.dispScore = 0; game.lives = LIVES; game.streak = 0;
-  game.time = 0; game.timeScale = 1; game.slowT = 0; game.shake = 0; game.flash = 0;
+  game.time = 0; game.timeScale = 1; game.slowT = 0; game.shake = 0; game.flash = 0; game.cheer = 0;
+  game.finishing = false; game.finishT = 0; game.finishBonus = 0;
+  el.banner.classList.add('hidden');
   game.stats = newStats(); game.newRecord = false; game.runEntry = null;
-  resetTerrain();
-  placeBike(900);
+  buildTrack(def);
+  updatePalette();
+  placeBike(250);
   parts.length = 0; popups.length = 0;
   view.zoom = 1; snapCamera();
   lastHud = {};
@@ -1489,38 +1765,59 @@ function startGame() {
   }
 }
 
-function endGame() {
+function endGame(reason) {
+  if (game.state === 'over') return;
   game.state = 'over';
   setPlayUI(false);
+  const def = T.def;
+  const finished = reason === 'finish';
+  game.finishBonus = finished ? game.lives * 250 : 0;
+  game.score += game.finishBonus;
   const sc = Math.floor(game.score);
-  const prevBest = store.data.best;
+  const rec = store.trackRec(def.id);
+  const prevBest = rec.best;
+  const prevMedal = medalFor(prevBest, def);
   game.newRecord = sc > prevBest && sc > 0;
   let id = null;
   if (sc > 0) {
     id = Date.now();
-    store.data.scores.push({ id, score: sc, name: store.data.name || 'Fahrer' });
-    store.data.scores.sort((a, b) => b.score - a.score);
-    store.data.scores = store.data.scores.slice(0, 10);
-    if (!store.data.scores.some((e) => e.id === id)) id = null;
+    rec.scores.push({ id, score: sc, name: store.data.name || 'Fahrer' });
+    rec.scores.sort((a, b) => b.score - a.score);
+    rec.scores = rec.scores.slice(0, 10);
+    if (!rec.scores.some((e) => e.id === id)) id = null;
   }
-  if (sc > prevBest) store.data.best = sc;
+  if (sc > prevBest) rec.best = sc;
   store.save();
   const S = game.stats;
+  const info = trackInfo(def);
+  const medal = medalFor(sc, def);
+  $('over-title').textContent = finished ? '🏁 Ziel erreicht!' : 'Ausgeschieden';
+  $('over-track').textContent = def.name;
   $('over-score').textContent = fmt(sc);
   $('over-badge').classList.toggle('hidden', !game.newRecord);
+  $('over-badge').textContent = medal > prevMedal ? '🏅 NEUE MEDAILLE!' : '🏆 NEUER REKORD!';
+  const m = info.medals;
+  $('over-medals').innerHTML =
+    [[1, m.bronze], [2, m.silver], [3, m.gold]].map(([i, v]) => '<span class="mdl-chip' + (medal >= i ? ' got' : '') + '">' + MEDAL_ICON[i] + ' ' + fmt(v) + '</span>').join('') +
+    '<div class="par">Profi-Richtwert: ≈ ' + fmt(info.par) + '</div>';
   $('over-stats').innerHTML =
-    '<span>Distanz <b>' + Math.floor(S.dist) + ' m</b></span>' +
-    '<span>Sprünge <b>' + S.jumps + '</b></span>' +
+    '<span>Sprünge <b>' + S.jumps + ' / ' + info.jumps + '</b></span>' +
     '<span>Beste Combo <b>' + fmt(S.bestCombo) + '</b></span>' +
     '<span>Flips <b>' + S.flips + '</b></span>' +
     '<span>Längste Luft <b>' + S.maxAir.toFixed(1) + ' s</b></span>' +
-    '<span>Perfekte Landungen <b>' + S.perfect + '</b></span>';
-  renderScores($('over-table'), { limit: 5, highlight: id });
+    '<span>Perfekte Landungen <b>' + S.perfect + '</b></span>' +
+    (game.finishBonus ? '<span>Ziel-Bonus <b>+' + fmt(game.finishBonus) + '</b></span>' : '');
+  renderScores($('over-table'), def.id, { limit: 5, highlight: id });
+  const idx = TRACKS.indexOf(trackById(def.id));
+  const next = TRACKS[idx + 1];
+  $('btn-next').classList.toggle('hidden', !next);
+  $('btn-next').dataset.track = next ? next.id : '';
   game.demo = true;
   placeBike(findSafeSpot(bike.px + 300));
   snapCamera();
   showScreen('over');
   if (game.newRecord) sfx.record(); else sfx.over();
+  updateMenuInfo();
 }
 
 function pauseGame() {
@@ -1539,8 +1836,12 @@ function toMenu() {
   game.state = 'menu';
   setPlayUI(false);
   startDemo();
-  $('menu-best').textContent = fmt(store.data.best);
+  updateMenuInfo();
   showScreen('menu');
+}
+function openTracks() {
+  renderTracks();
+  showScreen('tracks');
 }
 
 // ===================================================================
@@ -1592,7 +1893,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Enter' || e.key === ' ') {
-    if (game.state === 'menu' || game.state === 'over') { e.preventDefault(); startGame(); return; }
+    if (game.state === 'over') { e.preventDefault(); startGame(); return; }
+    if (game.state === 'menu' && $('screen-menu').classList.contains('active')) { e.preventDefault(); openTracks(); return; }
     if (game.state === 'paused') { resumeGame(); return; }
   }
   const act = KEYMAP[e.key];
@@ -1607,17 +1909,19 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) { rel
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 function updateSoundBtn() { $('btn-sound').textContent = sfx.muted ? '🔇 Sound aus' : '🔊 Sound an'; }
-$('btn-start').addEventListener('click', () => { sfx.init(); sfx.click(); startGame(); });
+$('btn-start').addEventListener('click', () => { sfx.init(); sfx.click(); openTracks(); });
 $('btn-howto').addEventListener('click', () => { sfx.init(); sfx.click(); showScreen('howto'); });
-$('btn-scores').addEventListener('click', () => { sfx.init(); sfx.click(); renderScores($('scores-list')); showScreen('scores'); });
+$('btn-scores').addEventListener('click', () => { sfx.init(); sfx.click(); scoreTab = store.data.lastTrack || 'arena'; renderScoreTabs(); showScreen('scores'); });
 $('btn-sound').addEventListener('click', () => { sfx.init(); sfx.setMuted(!sfx.muted); updateSoundBtn(); sfx.click(); });
 document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { sfx.click(); showScreen(b.dataset.goto); }));
 $('btn-pause').addEventListener('click', () => { releaseAll(); pauseGame(); });
 $('btn-resume').addEventListener('click', () => { sfx.click(); resumeGame(); });
-$('btn-restart').addEventListener('click', () => { sfx.click(); startGame(); });
+$('btn-restart').addEventListener('click', () => { sfx.click(); startGame(game.trackId); });
 $('btn-quit').addEventListener('click', () => { sfx.click(); toMenu(); });
-$('btn-retry').addEventListener('click', () => { sfx.click(); startGame(); });
+$('btn-retry').addEventListener('click', () => { sfx.click(); startGame(game.trackId); });
 $('btn-menu').addEventListener('click', () => { sfx.click(); toMenu(); });
+$('btn-tracks').addEventListener('click', () => { sfx.click(); game.state = 'menu'; startDemo(); openTracks(); });
+$('btn-next').addEventListener('click', () => { sfx.click(); startGame($('btn-next').dataset.track); });
 
 // ===================================================================
 // Hauptschleife
@@ -1648,6 +1952,7 @@ function frame(now) {
 
     updateParticles(dt * game.timeScale);
     game.shake = Math.max(0, game.shake - dt * 2.4);
+    game.cheer = Math.max(0, game.cheer - dt * 0.5);
     game.flash = Math.max(0, game.flash - dt * 2.5);
     updateCamera(dt);
 
@@ -1672,7 +1977,7 @@ function frame(now) {
 // ===================================================================
 resize();
 updateSoundBtn();
-$('menu-best').textContent = fmt(store.data.best);
+updateMenuInfo();
 startDemo();
 requestAnimationFrame(frame);
 
@@ -1681,5 +1986,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 
 // Debug / Tests
-window.FMX = { game, bike, input, ai, T, step, predictLanding,  startGame, terrainY, slopeAt, setAct, store, view, pal, get parts() { return parts; } };
+window.FMX = { game, bike, input, ai, T, TRACKS, buildTrack, trackInfo, medalFor, endGame, step, predictLanding, startGame, terrainY, slopeAt, setAct, store, view, pal, get parts() { return parts; } };
 })();

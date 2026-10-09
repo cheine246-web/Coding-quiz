@@ -23,9 +23,11 @@
       <div class="hud-label">SCORE</div>
       <div id="hud-score">0</div>
       <div class="hud-best">BEST <span id="hud-best">0</span></div>
+      <div id="hud-goal"></div>
     </div>
     <div class="hud-center">
-      <div id="hud-dist">0 m</div>
+      <div id="hud-dist">0 %</div>
+      <div id="hud-track"><i id="hud-bar"></i></div>
       <div id="hud-streak"></div>
     </div>
     <div class="hud-right">
@@ -36,6 +38,7 @@
 
   <div id="combo" class="hidden"></div>
   <div id="warn" class="hidden">LOSLASSEN!</div>
+  <div id="banner" class="hidden"></div>
   <div id="hint" class="hidden"></div>
 
   <!-- Touch controls -->
@@ -59,15 +62,24 @@
         <div class="logo-top">MOTOCROSS FREESTYLE</div>
         <h1>FMX <span>KING</span></h1>
       </div>
-      <p class="tagline">Spring, dreh dich, lande sauber – je härter der Trick, desto mehr Punkte!</p>
+      <p class="tagline">Hol auf jeder Stadion-Strecke die maximale Punktzahl – je härter der Trick, desto mehr Punkte!</p>
       <div class="menu-buttons">
-        <button id="btn-start" class="big-btn">▶ SPIELEN</button>
+        <button id="btn-start" class="big-btn">▶ STRECKE WÄHLEN</button>
         <button id="btn-howto" class="small-btn">Tricks &amp; Punkte</button>
         <button id="btn-scores" class="small-btn">🏆 Highscores</button>
         <button id="btn-sound" class="small-btn">🔊 Sound an</button>
       </div>
-      <div class="menu-best">Dein Rekord: <b id="menu-best">0</b></div>
+      <div class="menu-best">Medaillen: <b id="menu-best">0</b></div>
       <div id="portrait-tip" class="tip">📱 Tipp: Handy quer halten für die beste Sicht!</div>
+    </div>
+  </div>
+
+  <!-- TRACKS -->
+  <div id="screen-tracks" class="screen">
+    <div class="panel wide">
+      <h2>Strecke wählen</h2>
+      <div id="track-list" class="track-list"></div>
+      <button class="small-btn back-btn" data-goto="menu">← Zurück</button>
     </div>
   </div>
 
@@ -84,6 +96,8 @@
             <li><b>↷ VORN</b> in der Luft = Frontflip / Nase senken.</li>
             <li><b>Trick-Buttons</b> in der Luft <u>gedrückt halten</u> – und <u>vor der Landung loslassen</u>!</li>
             <li>Lande mit den Rädern auf dem Boden, sonst Crash. Du hast 3 Leben.</li>
+            <li>Jede Strecke ist <b>fest</b> und endet im Ziel. Hol dabei so viele Punkte wie möglich – für 🥉 🥈 🥇 und deinen Rekord!</li>
+            <li>Übrige Leben geben im Ziel <b>+250</b> pro Herz.</li>
           </ul>
           <p class="keys">Tastatur: ← → = Neigen · Z X C V = Tricks · P = Pause</p>
         </div>
@@ -112,6 +126,7 @@
   <div id="screen-scores" class="screen">
     <div class="panel narrow">
       <h2>🏆 Highscores</h2>
+      <div id="score-tabs" class="tabs"></div>
       <div id="scores-list"></div>
       <button class="big-btn back-btn" data-goto="menu">ZURÜCK</button>
     </div>
@@ -134,17 +149,21 @@
     <div class="panel center over-panel">
       <div class="over-grid">
         <div class="over-left">
-          <div id="over-badge" class="badge hidden">🏆 NEUER HIGHSCORE!</div>
-          <h2>Game Over</h2>
+          <div id="over-badge" class="badge hidden">🏆 NEUER REKORD!</div>
+          <h2 id="over-title">Game Over</h2>
+          <div id="over-track" class="over-track"></div>
           <div class="over-score" id="over-score">0</div>
+          <div id="over-medals" class="over-medals"></div>
           <div class="over-stats" id="over-stats"></div>
           <div class="menu-buttons row">
             <button id="btn-retry" class="big-btn">↺ NOCHMAL</button>
+            <button id="btn-next" class="small-btn">Nächste ▶</button>
+            <button id="btn-tracks" class="small-btn">Strecken</button>
             <button id="btn-menu" class="small-btn">Menü</button>
           </div>
         </div>
         <div class="over-right">
-          <h3>Top 5 · Namen antippen zum Ändern</h3>
+          <h3>Top 5 dieser Strecke · Namen antippen</h3>
           <div id="over-table"></div>
         </div>
       </div>

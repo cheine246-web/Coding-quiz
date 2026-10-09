@@ -348,3 +348,56 @@ tr.me td { background: rgba(255,210,63,.14); }
 @media (max-width: 640px) and (orientation: portrait) {
   .over-grid { grid-template-columns: 1fr; gap: 10px; }
 }
+
+/* ---------- Strecken / Medaillen ---------- */
+#hud-goal { font-size: 11px; letter-spacing: 1px; color: var(--yellow); margin-top: 2px; }
+#hud-track { width: clamp(120px, 26vw, 220px); height: 6px; margin: 4px auto 0; border-radius: 4px; background: rgba(0,0,0,.4); overflow: hidden; border: 1px solid rgba(255,255,255,.3); }
+#hud-bar { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--lime)); transition: width .15s linear; }
+.panel.wide { max-width: 900px; }
+.track-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+@media (max-width: 700px) and (orientation: portrait) { .track-list { grid-template-columns: 1fr; } }
+.track-card {
+  position: relative; text-align: left; color: #fff; font-family: var(--font-ui);
+  background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.2); border-radius: 16px;
+  padding: 0 12px 10px; overflow: hidden; cursor: pointer; touch-action: manipulation;
+  transition: transform .08s, border-color .08s;
+}
+.track-card:active { transform: scale(.97); border-color: var(--yellow); }
+.tc-sky { height: 38px; margin: 0 -12px 8px; }
+.tc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.tc-name { font-family: var(--font-display); font-style: italic; font-size: 16px; color: var(--yellow); }
+.tc-stars { color: var(--orange); font-size: 12px; letter-spacing: 1px; white-space: nowrap; }
+.tc-blurb { font-size: 12px; color: rgba(255,255,255,.8); margin: 4px 0 6px; min-height: 30px; }
+.tc-meta { font-size: 11px; color: var(--cyan); }
+.tc-best { font-size: 13px; margin-top: 4px; }
+.tc-best b { font-family: var(--font-display); color: #fff; }
+.tc-goal { font-size: 11px; color: rgba(255,255,255,.6); margin-top: 2px; }
+.mdl { opacity: .22; filter: grayscale(1); margin-left: 2px; }
+.mdl.got { opacity: 1; filter: none; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tab { font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.3); background: transparent; color: #fff; cursor: pointer; }
+.tab.on { background: var(--yellow); color: #2a1200; border-color: var(--yellow); font-weight: 700; }
+.over-track { font-size: 12px; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; margin: -4px 0 2px; }
+.over-medals { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 4px 0 6px; font-size: 12px; }
+.mdl-chip { padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); opacity: .45; }
+.mdl-chip.got { opacity: 1; background: linear-gradient(90deg, var(--yellow), var(--orange)); color: #2a1200; font-weight: 700; }
+.over-medals .par { width: 100%; font-size: 11px; color: rgba(255,255,255,.6); }
+@media (max-height: 430px) {
+  .tc-sky { height: 22px; margin-bottom: 4px; }
+  .tc-blurb { min-height: 0; font-size: 11px; margin: 2px 0 3px; }
+  .track-card { padding-bottom: 6px; }
+  .tc-name { font-size: 14px; }
+}
+
+#banner {
+  position: fixed; top: 38%; left: 50%; transform: translate(-50%, -50%);
+  font-family: var(--font-display); font-style: italic; font-size: clamp(48px, 14vw, 110px);
+  letter-spacing: 2px; pointer-events: none; white-space: nowrap;
+  background: linear-gradient(180deg, #fff 10%, var(--yellow) 50%, var(--orange));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 4px 0 #8a1d00) drop-shadow(0 0 24px rgba(255,160,0,.8));
+  animation: bannerIn .55s cubic-bezier(.2, 1.6, .4, 1);
+}
+@keyframes bannerIn { from { transform: translate(-50%, -50%) scale(.2); opacity: 0; } to { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+.menu-buttons.row .big-btn { flex: 1 1 100%; width: 100%; }
+.menu-buttons.row .small-btn { flex: 1 1 0; }

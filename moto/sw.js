@@ -1,5 +1,5 @@
 // Einfacher Service Worker: Spiel funktioniert nach dem ersten Laden auch offline.
-const CACHE = 'fmxking-v1';
+const CACHE = 'fmxking-v2';
 const FILES = ['./', 'index.html', 'style.css', 'game.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
