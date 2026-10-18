@@ -1,47 +1,37 @@
-// Misst mit einem Test-Bot (Tricks + Flips) die erreichbare Punktzahl jeder Strecke.
-// Die Werte tragen wir als `ref` in TRACKS (moto/game.js) ein – daraus ergeben sich die Medaillen.
+// Misst mit dem eingebauten Bot (Skill 1.0: Absprung-Timing, Tricks, Flips) die erreichbare
+// Punktzahl jeder Strecke. Den Mittelwert tragen wir als `ref` in TRACKS (moto/game.js) ein –
+// daraus ergeben sich die Medaillen.
 //
-//   node moto/tools/calibrate.js          (benötigt Playwright + Chromium)
-//
-// Der Bot ist bewusst "ordentlich, nicht perfekt": er fährt keine perfekten Landungen gezielt an.
+//   node moto/tools/calibrate.js [Läufe pro Strecke]      (benötigt Playwright + Chromium)
 const path = require('path');
 let chromium;
 try { ({ chromium } = require('playwright')); } catch (e) { ({ chromium } = require('/opt/node22/lib/node_modules/playwright')); }
 
+const RUNS = Number(process.argv[2]) || 5;
 (async () => {
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
   const page = await browser.newPage();
   await page.goto('file://' + path.resolve(__dirname, '..', 'index.html'));
   await page.waitForTimeout(500);
-  const res = await page.evaluate(() => {
-    const { bike, step, game, setAct, startGame, predictLanding, TRACKS } = window.FMX;
-    const ORDER = ['cliff', 'nacnac', 'superman', 'cancan'];
+  const res = await page.evaluate((runs) => {
+    const F = window.FMX;
     const out = [];
-    for (const def of TRACKS) {
-      startGame(def.id);
-      let plan = null, steps = 0;
-      while (game.state === 'play' && steps < 120 * 600) {
-        steps++;
-        if (bike.mode === 'air') {
-          if (steps % 4 === 0) bike.pred = predictLanding(bike);
-          if (!plan) { const total = bike.pred.t; plan = { flip: total > 2.3 ? 2 : total > 1.45 ? 1 : 0, dir: total > 1.7 ? 1 : -1 }; }
-          const t = bike.airT;
-          const turns = (bike.takeoffA + bike.rot - Math.atan(bike.pred.slope)) / (2 * Math.PI);
-          setAct('back', !!plan.flip && plan.dir < 0 && turns > -(plan.flip - 0.22));
-          setAct('fwd', !!plan.flip && plan.dir > 0 && turns < (plan.flip - 0.22));
-          const slot = Math.floor((t - 0.15) / 0.5), inSlot = ((t - 0.15) % 0.5) < 0.44;
-          for (const k of ORDER) setAct(k, false);
-          if (t > 0.15 && bike.pred.t > 0.5 && inSlot && slot < 4) setAct(ORDER[slot], true);
-        } else {
-          plan = null;
-          for (const k of ['back', 'fwd', ...ORDER]) setAct(k, false);
-        }
-        step(1 / 120);
+    for (const def of F.TRACKS) {
+      const scores = [];
+      for (let r = 0; r < runs; r++) {
+        F.game.autopilot = 1;
+        F.startGame(def.id);
+        for (let n = 0; F.game.state === 'play' && n < 120 * 600; n++) F.step(1 / 120);
+        scores.push(Math.round(F.player.score));
       }
-      out.push({ id: def.id, score: Math.round(game.score), lives: game.lives, flips: game.stats.flips, tricks: game.stats.tricks, ref: def.ref });
+      out.push({ id: def.id, ref: def.ref, scores });
     }
+    F.game.autopilot = 0;
     return out;
-  });
-  for (const r of res) console.log(`${r.id.padEnd(8)} Bot: ${String(r.score).padStart(7)}  (Herzen ${r.lives}, Tricks ${r.tricks}, Flips ${r.flips})   aktuelles ref: ${r.ref}`);
+  }, RUNS);
+  for (const r of res) {
+    const avg = Math.round(r.scores.reduce((a, b) => a + b, 0) / r.scores.length / 500) * 500;
+    console.log(`${r.id.padEnd(8)} Mittel ${String(avg).padStart(7)}   (Läufe: ${r.scores.join(', ')})   aktuelles ref: ${r.ref}`);
+  }
   await browser.close();
 })();

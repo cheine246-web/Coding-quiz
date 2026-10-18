@@ -166,6 +166,7 @@ const sfx = (() => {
       tone(60, 0.7, 'sine', 0.3, -30, 0.05);
     },
     over() { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.28, 'triangle', 0.2, 0, i * 0.2)); },
+    pop(perfect) { tone(perfect ? 520 : 380, 0.09, 'square', 0.12, perfect ? 600 : 200); if (perfect) tone(1040, 0.12, 'triangle', 0.12, 0, 0.06); },
     crowd() { noise(0.9, 0.16, 1800); noise(0.5, 0.1, 3200, 0.1); },
     record() { [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => tone(f, 0.14, 'square', 0.1, 0, i * 0.09)); },
   };
@@ -204,11 +205,11 @@ const START_X = 1000;   // Ende der Startgerade
 const MEDAL_FRAC = { bronze: 0.25, silver: 0.55, gold: 0.9 };
 const TRACKS = [
   { id: 'arena', name: 'Warm-up Arena', blurb: 'Weite, freundliche Rampen – zum Einfahren und Tricks üben.',
-    theme: 1, seed: 7, jumps: 14, h0: 90, h1: 170, mega: 240, v0: 480, v1: 540, doubleP: 0.15, rollerP: 0.3, stars: 1, ref: 27000 },
+    theme: 1, seed: 7, jumps: 14, h0: 90, h1: 170, mega: 240, v0: 480, v1: 540, doubleP: 0.15, rollerP: 0.3, stars: 1, ref: 47000 },
   { id: 'sunset', name: 'Sunset Stadium', blurb: 'Höhere Sprünge, Doubles und Whoops im Abendlicht.',
-    theme: 0, seed: 21, jumps: 18, h0: 120, h1: 230, mega: 320, v0: 520, v1: 600, doubleP: 0.3, rollerP: 0.3, stars: 2, ref: 110000 },
+    theme: 0, seed: 21, jumps: 18, h0: 120, h1: 230, mega: 320, v0: 520, v1: 600, doubleP: 0.3, rollerP: 0.3, stars: 2, ref: 116000 },
   { id: 'dome', name: 'Night Dome', blurb: 'Riesen-Rampen unter Flutlicht. Nur für echte Könige.',
-    theme: 2, seed: 99, jumps: 24, h0: 150, h1: 300, mega: 420, v0: 560, v1: 660, doubleP: 0.4, rollerP: 0.25, stars: 3, ref: 180000 },
+    theme: 2, seed: 99, jumps: 24, h0: 150, h1: 300, mega: 420, v0: 560, v1: 660, doubleP: 0.4, rollerP: 0.25, stars: 3, ref: 270000 },
 ];
 
 function mulberry32(a) {
@@ -314,44 +315,74 @@ function slopeAt(x) { return (terrainY(x + 3) - terrainY(x - 3)) / 6; }
 // ===================================================================
 // Spielzustand
 // ===================================================================
-const input = { back: false, fwd: false, cancan: false, superman: false, nacnac: false, cliff: false };
-const ai = { back: false, fwd: false, cancan: false, superman: false, nacnac: false, cliff: false, plan: null };
-let trickOrder = [];
+// Eingabe eines Fahrers: lean = -1 (hinten) .. +1 (vorn), jumpPress = Absprung-Flanke,
+// Tricks als Flags + Reihenfolge (zuletzt gedrückt gewinnt)
+function newInput() {
+  return { lean: 0, jumpPress: false, cancan: false, superman: false, nacnac: false, cliff: false, order: [] };
+}
+const input = newInput();   // Spieler (Sticks / Tastatur)
+const IDLE = newInput();
 
 const game = {
   state: 'menu',      // menu | play | paused | over
   demo: true,
-  score: 0, dispScore: 0, lives: LIVES, streak: 0,
+  autopilot: 0,       // >0: Spieler wird vom Bot gesteuert (Tests / Kalibrierung)
+  dispScore: 0,
   time: 0, timeScale: 1, slowT: 0,
-  stats: null,
   shake: 0, flash: 0,
   newRecord: false,
   runEntry: null,
   trackId: 'arena', demoIdx: 0,
-  finishing: false, finishT: 0, finishBonus: 0, cheer: 0,
+  finishing: false, finishT: 0, cheer: 0, ffwd: false,
 };
-const IDLE = { back: false, fwd: false, cancan: false, superman: false, nacnac: false, cliff: false };
 
-const bike = {};
 function newStats() {
-  return { bestCombo: 0, maxAir: 0, flips: 0, tricks: 0, jumps: 0, perfect: 0, wheelie: 0, dist: 0 };
+  return { bestCombo: 0, maxAir: 0, flips: 0, tricks: 0, jumps: 0, perfect: 0, wheelie: 0, dist: 0, pops: 0 };
 }
 
-function placeBike(x) {
-  Object.assign(bike, {
+// Farben je Fahrer (Spieler + Bots)
+const PLAYER_COLORS = { bike: '#ff6a00', jersey: '#2a7bff', jerseyFar: '#1b46a8', fore: '#1c5fe0', foreFar: '#16358a', stripe: '#ff2e93', num: '7' };
+const BOT_DEFS = [
+  { name: 'Max',  colors: { bike: '#e8272f', jersey: '#ffd23f', jerseyFar: '#b8941c', fore: '#f2b705', foreFar: '#9c7a10', stripe: '#e8272f', num: '23' } },
+  { name: 'Lena', colors: { bike: '#22c55e', jersey: '#a855f7', jerseyFar: '#6d28d9', fore: '#9333ea', foreFar: '#5b21b6', stripe: '#22c55e', num: '11' } },
+  { name: 'Kai',  colors: { bike: '#0ea5e9', jersey: '#f43f5e', jerseyFar: '#9f1239', fore: '#e11d48', foreFar: '#881337', stripe: '#0ea5e9', num: '42' } },
+];
+const BOT_SKILL = { 1: [0.4, 0.55, 0.7], 2: [0.55, 0.7, 0.85], 3: [0.65, 0.8, 0.95] };
+
+function newRider(o) {
+  return Object.assign({
+    name: 'Du', isPlayer: false, skill: 0.75, colors: PLAYER_COLORS, b: {}, input: newInput(),
+    score: 0, streak: 0, lives: LIVES, stats: newStats(), done: false, out: false, bonus: 0,
+    plan: null, popFor: null, popAt: 0, lastLand: null, speedK: 1, predT: 0,
+  }, o);
+}
+function resetRider(R) {
+  Object.assign(R, { score: 0, streak: 0, lives: LIVES, stats: newStats(), done: false, out: false, bonus: 0, plan: null, popFor: null, lastLand: null, predT: 0 });
+}
+const player = newRider({ isPlayer: true, name: 'Du', input });
+const bike = player.b;          // Spieler-Bike (Kamera, HUD)
+let riders = [player];
+// game.score usw. zeigen auf den Spieler (HUD- und Ergebnis-Code bleibt lesbar)
+for (const k of ['score', 'streak', 'lives', 'stats']) {
+  Object.defineProperty(game, k, { get: () => player[k], set: (v) => { player[k] = v; }, enumerable: true });
+}
+const isFx = (R) => R.isPlayer && !game.demo && !game.ffwd;   // Effekte/Sound nur für den echten Spieler
+
+function placeBike(b, x, speedK = 1) {
+  Object.assign(b, {
     mode: 'ground', px: x, x, y: 0, vx: 0, vy: 0, a: 0, w: 0,
-    s: speedTarget(x) * 0.8, pitch: 0, pitchVel: 0, gAngle: 0, holdBack: 0,
+    s: speedTarget(x) * 0.8 * speedK, pitch: 0, pitchVel: 0, gAngle: 0, holdBack: 0,
     rot: 0, airT: 0, takeoffA: 0, wheelRot: 0, wheelW: 0, sus: 0, susVel: 0,
-    groundT: 0.3, wheelieT: 0, dustT: 0, lean: 0, lipA: 0,
+    groundT: 0.3, wheelieT: 0, dustT: 0, lean: 0, lipA: 0, popT: 0, popWarned: false,
     tw: { cancan: 0, superman: 0, nacnac: 0, cliff: 0 },
     th: { cancan: 0, superman: 0, nacnac: 0, cliff: 0 },
     pred: { t: 0, x, slope: 0 }, crash: null, crashT: 0, flicker: 0,
   });
-  solveGround(bike);
-  const ang = Math.atan(slopeAt(bike.px));
-  bike.vx = Math.cos(ang) * bike.s;
-  bike.vy = Math.sin(ang) * bike.s;
-  bike.mvx = bike.vx; bike.mvy = bike.vy;
+  solveGround(b);
+  const ang = Math.atan(slopeAt(b.px));
+  b.vx = Math.cos(ang) * b.s;
+  b.vy = Math.sin(ang) * b.s;
+  b.mvx = b.vx; b.mvy = b.vy;
 }
 
 function findSafeSpot(fromX) {
@@ -363,6 +394,11 @@ function findSafeSpot(fromX) {
     if (ok) return x;
   }
   return fromX;
+}
+// Nächste Sprungkante vor x (oder die, auf deren Rampe wir gerade sind)
+function nextLip(x) {
+  for (const j of T.jumps) if (j.x >= x - 4) return j;
+  return null;
 }
 
 // ----------------------------------------------------------------------
@@ -440,8 +476,8 @@ function emitSparks(x, y, n) {
     emit({ type: 'spark', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 120, g: 800, drag: 0.5, life: rand(0.25, 0.7), max: 0.7, size: rand(1.5, 2.6), color: Math.random() < 0.5 ? '#ffd23f' : '#ff7a1a' });
   }
 }
-function popup(text, color, size, x, y, delay = 0) {
-  popups.push({ text, color, size, x, y, life: 1.6 + delay, max: 1.6, delay, vy: -46 });
+function popup(text, color, size, x, y, delay = 0, ghost = false) {
+  popups.push({ text, color, size, x, y, life: 1.6 + delay, max: 1.6, delay, vy: -46, ghost });
 }
 function updateParticles(dt) {
   for (let i = parts.length - 1; i >= 0; i--) {
@@ -472,11 +508,11 @@ function updateParticles(dt) {
 const POSE_KEYS = ['hipx', 'hipy', 'shx', 'shy', 'hnx', 'hny', 'hfx', 'hfy', 'fnx', 'fny', 'ffx', 'ffy', 'knx', 'kny', 'enx', 'eny'];
 const mkPose = (a) => Object.fromEntries(POSE_KEYS.map((k, i) => [k, a[i]]));
 const POSES = {
-  neutral:  mkPose([-15, -38,  -3, -67,   17, -56,   17, -56,   -2, -10,   -3, -10,   1, 0,   0, -1]),
-  superman: mkPose([-42, -46, -10, -62,   17, -56,   17, -56,  -96, -54,  -94, -48,   0, 1,   0, -1]),
-  cancan:   mkPose([-15, -38,   0, -66,   17, -56,   17, -56,   16, -66,   -3, -10,   0.4, -1,   0, -1]),
-  nacnac:   mkPose([-13, -38,   2, -65,   17, -56,   17, -56,  -62, -58,   -3, -10,   -0.3, -1,   0, -1]),
-  cliff:    mkPose([-24, -36, -12, -66,   17, -56,   17, -56,   18, -62,   20, -57,   1, -0.3,   0, -1]),
+  neutral:  mkPose([-15, -38,  -3, -67,   17, -56,   17, -56,   -2, -10,   -3, -10,   1, 0,   -0.5, 1]),
+  superman: mkPose([-42, -46, -10, -62,   17, -56,   17, -56,  -96, -54,  -94, -48,   0, 1,   -0.5, 1]),
+  cancan:   mkPose([-15, -38,   0, -66,   17, -56,   17, -56,   16, -66,   -3, -10,   0.4, -1,   -0.5, 1]),
+  nacnac:   mkPose([-13, -38,   2, -65,   17, -56,   17, -56,  -62, -58,   -3, -10,   -0.3, -1,   -0.5, 1]),
+  cliff:    mkPose([-24, -36, -12, -66,   17, -56,   17, -56,   18, -62,   20, -57,   1, -0.3,   -0.5, 1]),
 };
 function computePose(tw, lean) {
   let sum = 0;
@@ -521,6 +557,7 @@ function solvePose(P, sy) {
   return { hip, sh, root, head, legN, legF, armN, armF, tilt: Math.atan2(tx, -ty) };
 }
 
+let CUR = null;   // Farbsatz des gerade gezeichneten Fahrers (siehe drawBike)
 const COL = {
   bike: '#ff6a00', bikeDark: '#c24300', black: '#14141c', metal: '#c8ccd6', gold: '#e0ac3a',
   jersey: '#2a7bff', jerseyDark: '#1a4fbd', pants: '#17171f', boot: '#eceef4', glove: '#ffd23f',
@@ -548,7 +585,7 @@ function drawLeg(c, hip, leg, far) {
   }
 }
 function drawArm(c, sh, arm, far) {
-  const up = far ? '#1b46a8' : COL.jersey, fo = far ? '#16358a' : '#1c5fe0';
+  const up = far ? CUR.jerseyFar : CUR.jersey, fo = far ? CUR.foreFar : CUR.fore;
   c.lineCap = 'round'; c.lineJoin = 'round';
   // Kontur beider Segmente zuerst, damit sich am Ellbogen keine Linien kreuzen
   c.strokeStyle = COL.outline;
@@ -573,7 +610,7 @@ function drawArm(c, sh, arm, far) {
   c.restore();
 }
 function drawTorso(c, J) {
-  limb(c, [J.hip, J.sh], 15, COL.jersey);
+  limb(c, [J.hip, J.sh], 15, CUR.jersey);
   // Streifen
   c.lineCap = 'round';
   c.strokeStyle = '#ffffff'; c.lineWidth = 3;
@@ -584,7 +621,7 @@ function drawTorso(c, J) {
   c.stroke();
   // Hüfte + Schulter
   c.fillStyle = COL.pants; c.beginPath(); c.arc(J.hip[0], J.hip[1], 8, 0, TAU); c.fill();
-  c.fillStyle = COL.jersey; c.beginPath(); c.arc(J.sh[0], J.sh[1], 7.5, 0, TAU); c.fill();
+  c.fillStyle = CUR.jersey; c.beginPath(); c.arc(J.sh[0], J.sh[1], 7.5, 0, TAU); c.fill();
 }
 function drawHelmet(c, J) {
   c.save();
@@ -594,7 +631,7 @@ function drawHelmet(c, J) {
   c.fillStyle = COL.outline; c.beginPath(); c.arc(0, 0, 12.8, 0, TAU); c.fill();
   c.fillStyle = COL.helmet; c.beginPath(); c.arc(0, 0, 11, 0, TAU); c.fill();
   // Streifen
-  c.strokeStyle = COL.stripe; c.lineWidth = 3.4;
+  c.strokeStyle = CUR.stripe; c.lineWidth = 3.4;
   c.beginPath(); c.arc(0, 0, 8.4, Math.PI * 1.05, Math.PI * 1.75); c.stroke();
   // Kinnbügel
   c.fillStyle = COL.outline;
@@ -610,7 +647,7 @@ function drawHelmet(c, J) {
   c.beginPath(); c.roundRect ? c.roundRect(3, -5, 10, 6.4, 2) : c.rect(3, -5, 10, 6.4); c.fill();
   c.fillStyle = 'rgba(255,255,255,.7)'; c.fillRect(4.5, -4.2, 3.5, 1.4);
   // Schirm
-  c.fillStyle = COL.bike;
+  c.fillStyle = CUR.bike;
   c.beginPath(); c.moveTo(-2, -10.5); c.lineTo(15, -9); c.quadraticCurveTo(18, -8, 16, -6); c.lineTo(0, -7.5); c.closePath(); c.fill();
   c.restore();
 }
@@ -657,12 +694,12 @@ function drawBikeBody(c, b) {
   c.fillStyle = '#4a4d5c'; c.beginPath(); c.arc(0, -14 + s * 0.6, 6, 0, TAU); c.fill();
   c.fillStyle = '#7b7f90'; c.beginPath(); c.arc(0, -14 + s * 0.6, 2.6, 0, TAU); c.fill();
   // Heck
-  poly(c, [[-56, -33 + s], [-36, -39 + s], [-14, -38 + s], [-4, -31 + s], [-8, -22 + s], [-36, -24 + s], [-54, -27 + s]], COL.bike, COL.outline, 2);
+  poly(c, [[-56, -33 + s], [-36, -39 + s], [-14, -38 + s], [-4, -31 + s], [-8, -22 + s], [-36, -24 + s], [-54, -27 + s]], CUR.bike, COL.outline, 2);
   poly(c, [[-36, -39 + s], [-12, -39 + s], [-5, -34 + s], [-36, -34 + s]], '#1b1b25', null);
   c.strokeStyle = 'rgba(255,255,255,.75)'; c.lineWidth = 2;
   c.beginPath(); c.moveTo(-50, -30 + s); c.lineTo(-20, -30 + s); c.stroke();
   // Tank
-  poly(c, [[-6, -34 + s], [4, -43 + s], [22, -43 + s], [31, -33 + s], [18, -26 + s], [-4, -26 + s]], COL.bike, COL.outline, 2);
+  poly(c, [[-6, -34 + s], [4, -43 + s], [22, -43 + s], [31, -33 + s], [18, -26 + s], [-4, -26 + s]], CUR.bike, COL.outline, 2);
   poly(c, [[6, -41 + s], [20, -41 + s], [24, -36 + s], [8, -36 + s]], 'rgba(255,255,255,.28)', null);
   // Gabel
   const head = [27, -42 + s];
@@ -671,13 +708,14 @@ function drawBikeBody(c, b) {
   // Kotflügel vorn
   c.strokeStyle = COL.outline; c.lineWidth = 7; c.lineCap = 'round';
   c.beginPath(); c.arc(hx, 0, RW + 4, Math.PI * 1.1, Math.PI * 1.62); c.stroke();
-  c.strokeStyle = COL.bike; c.lineWidth = 4;
+  c.strokeStyle = CUR.bike; c.lineWidth = 4;
   c.beginPath(); c.arc(hx, 0, RW + 4, Math.PI * 1.1, Math.PI * 1.62); c.stroke();
   // Startnummer-Tafel
   c.save(); c.translate(32, -47 + s); c.rotate(0.18);
   poly(c, [[-8, -9], [8, -10], [10, 7], [-8, 8]], '#ffffff', COL.outline, 2);
   c.fillStyle = '#111'; c.font = '900 14px Arial Black, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-  c.fillText('7', 1, 0);
+  c.font = (CUR.num.length > 1 ? '900 11px' : '900 14px') + ' Arial Black, Arial, sans-serif';
+  c.fillText(CUR.num, 1, 0);
   c.restore();
   // Lenker
   limb(c, [[22, -45 + s], [16, -57 + s]], 3.4, '#22222c');
@@ -721,10 +759,14 @@ function drawCrashedBike(c, t) {
 }
 
 // ===================================================================
-// Physik / Spiel-Logik
+// Physik / Spiel-Logik (gilt für Spieler und Bots)
 // ===================================================================
+const POP_WIN = 0.5;          // so lange (s) vor der Kante darf man "springen" drücken
+const POP_PERFECT = 0.2;      // ... und so knapp davor gibt es den Perfect Pop
+const MIN_SCORE_AIR = 0.8;    // kürzere Hüpfer zählen nicht für Tricks
+
 function activeTrick(I) {
-  for (let i = trickOrder.length - 1; i >= 0; i--) if (I[trickOrder[i]]) return trickOrder[i];
+  for (let i = I.order.length - 1; i >= 0; i--) if (I[I.order[i]]) return I.order[i];
   return null;
 }
 function poseWeight(b) {
@@ -747,9 +789,11 @@ function comboItems(b, slopeAng) {
   return items;
 }
 const comboMult = (n) => (n <= 1 ? 1 : 1 + 0.5 * (n - 1));
-const streakMult = () => 1 + 0.1 * Math.min(game.streak, 10);
+const streakMult = (R = player) => 1 + 0.1 * Math.min(R.streak, 10);
+const scores = (R) => !(game.demo && R.isPlayer);   // Demo-Fahrt im Menü zählt nicht
 
-function takeoff(b, xBall, yBall) {
+function takeoff(R, xBall, yBall) {
+  const b = R.b;
   b.mode = 'air';
   b.x = xBall; b.y = yBall;
   b.vy += GRAV * FIXED_DT;
@@ -757,18 +801,29 @@ function takeoff(b, xBall, yBall) {
   b.airT = 0; b.rot = 0; b.takeoffA = b.a;
   b.th = { cancan: 0, superman: 0, nacnac: 0, cliff: 0 };
   b.maxH = 0;
-  ai.plan = null;
-  if (b.wheelieT >= 1 && !game.demo) {
-    const pts = Math.round(b.wheelieT * 30);
-    popup('WHEELIE ' + b.wheelieT.toFixed(1) + 's  +' + pts, '#ffd23f', 22, b.x, b.y - 90);
+  b.popT = 0;
+  R.plan = null;
+  b.pred = predictLanding(b); R.predT = 0.03;
+  if (b.wheelieT >= 1 && isFx(R)) {
+    popup('WHEELIE ' + b.wheelieT.toFixed(1) + 's  +' + Math.round(b.wheelieT * 30), '#ffd23f', 22, b.x, b.y - 90);
   }
   b.wheelieT = 0;
-  if (!game.demo) { if (b.vy < -150) emitDirt(b.x - 40, terrainY(b.x - 40), b.vx, 0, 8, true); }
+  if (isFx(R) && b.vy < -150) emitDirt(b.x - 40, terrainY(b.x - 40), b.vx, 0, 8, true);
 }
 
-function crash(b, reason) {
+// Rückmeldung zum Absprung-Timing an einer Sprungkante
+function popResult(R, kind) {
+  const b = R.b;
+  if (kind === 'perfect' && scores(R)) { R.score += 100; R.stats.pops++; }
+  if (!isFx(R)) return;
+  if (kind === 'perfect') { popup('PERFECT POP!  +100', '#9dff3a', 22, b.x, b.y - 80); sfx.pop(true); }
+  else if (kind === 'good') { popup('POP!', '#19e3ff', 18, b.x, b.y - 80); sfx.pop(false); }
+  else popup('KEIN ABSPRUNG!', '#ff9f5a', 20, b.x, b.y - 80);
+}
+
+function crash(R, reason) {
+  const b = R.b;
   if (b.mode === 'crash') return;
-  const demo = game.demo;
   const vx = b.vx, vy = b.vy;
   b.mode = 'crash'; b.crashT = 0;
   b.crash = {
@@ -777,9 +832,8 @@ function crash(b, reason) {
     reason,
   };
   for (const k of TRICK_KEYS) b.tw[k] = 0;
-  if (!demo) {
-    game.lives--;
-    game.streak = 0;
+  if (scores(R)) { R.lives--; R.streak = 0; }
+  if (isFx(R)) {
     game.shake = 1; game.slowT = 0.9;
     game.flash = 0.5;
     popup(reason, '#ff3b3b', 34, b.x, b.y - 100);
@@ -791,7 +845,8 @@ function crash(b, reason) {
   }
 }
 
-function land(b) {
+function land(R) {
+  const b = R.b;
   const sl = slopeAt(b.x);
   const gA = Math.atan(sl);
   const d = normAngle(b.a - gA);
@@ -802,18 +857,20 @@ function land(b) {
   const vt = b.vx * tx + b.vy * ty;
   const impact = -(b.vx * nx + b.vy * ny);
 
-  if (Math.abs(d) > CRASH_ANGLE) return crash(b, 'BAD LANDING!');
-  if (poseW > 0.55) return crash(b, 'TRICK NICHT BEENDET!');
+  if (Math.abs(d) > CRASH_ANGLE) return crash(R, 'BAD LANDING!');
+  if (poseW > 0.55) return crash(R, 'TRICK NICHT BEENDET!');
 
   // sauber gelandet -> Auswertung
+  const airT = b.airT;
   const flips = flipCount(b, gA);
   const items = [];
-  for (const k of TRICK_KEYS) if (b.th[k] >= 0.3) items.push({ name: TRICKS[k].name, pts: TRICKS[k].pts });
-  if (flips !== 0) { const f = flipInfo(Math.abs(flips), flips); items.push({ name: f.name, pts: f.pts }); }
+  if (airT >= MIN_SCORE_AIR) {
+    for (const k of TRICK_KEYS) if (b.th[k] >= 0.3) items.push({ name: TRICKS[k].name, pts: TRICKS[k].pts });
+    if (flips !== 0) { const f = flipInfo(Math.abs(flips), flips); items.push({ name: f.name, pts: f.pts }); }
+  }
 
   const perfect = Math.abs(d) < PERFECT_ANGLE;
   const sloppy = Math.abs(d) > SLOPPY_ANGLE;
-  const airT = b.airT;
   const px = b.x, py = b.y;
 
   b.mode = 'ground';
@@ -828,38 +885,43 @@ function land(b) {
   solveGround(b);
   b.vx = b.s * Math.cos(gA); b.vy = b.s * Math.sin(gA);
   b.mvx = b.vx; b.mvy = b.vy;
+  R.plan = null;
 
-  game.lastLand = { d, flips, n: items.length, perfect, sloppy, airT, impact };
-  const demo = game.demo;
-  if (!demo) {
+  R.lastLand = { d, flips, n: items.length, perfect, sloppy, airT, impact };
+  if (R.isPlayer) game.lastLand = R.lastLand;
+  const fx = isFx(R), counts = scores(R);
+  if (counts) {
+    if (airT > 0.55) R.stats.jumps++;
+    R.stats.maxAir = Math.max(R.stats.maxAir, airT);
+  }
+  if (fx) {
     sfx.land(impact);
     if (navigator.vibrate) navigator.vibrate(impact > 400 ? 30 : 12);
     game.shake = Math.max(game.shake, clamp(impact / 700, 0.15, 0.8));
-    if (airT > 0.55) game.stats.jumps++;
-    game.stats.maxAir = Math.max(game.stats.maxAir, airT);
   }
-  emitDirt(px, terrainY(px), b.vx, 0, demo ? 6 : clamp(Math.round(impact / 25), 6, 22), impact > 350);
+  if (R.isPlayer && !game.ffwd) emitDirt(px, terrainY(px), b.vx, 0, fx ? clamp(Math.round(impact / 25), 6, 22) : 6, impact > 350);
 
   if (items.length) {
-    game.cheer = Math.min(1.6, game.cheer + 0.6);
-    if (!game.demo) sfx.crowd();
     const mult = comboMult(items.length);
     let base = 0;
     for (const it of items) base += it.pts;
     let total = base * mult;
-    const air = airT > 0.7 ? Math.round(airT * 60) : 0;
-    total += air;
+    total += airT > 0.7 ? Math.round(airT * 60) : 0;
     if (perfect) total *= 1.25;
     else if (sloppy) total *= 0.85;
-    if (perfect) game.streak++; else if (sloppy) game.streak = 0;
-    total *= streakMult();
+    if (perfect) R.streak++; else if (sloppy) R.streak = 0;
+    total *= streakMult(R);
     total = Math.round(total / 10) * 10;
-    if (!demo) {
-      game.score += total;
-      game.stats.bestCombo = Math.max(game.stats.bestCombo, total);
-      game.stats.tricks += items.length;
-      game.stats.flips += Math.abs(flips);
-      if (perfect) game.stats.perfect++;
+    if (R.isPlayer) game.cheer = Math.min(1.6, game.cheer + 0.6);
+    if (counts) {
+      R.score += total;
+      R.stats.bestCombo = Math.max(R.stats.bestCombo, total);
+      R.stats.tricks += items.length;
+      R.stats.flips += Math.abs(flips);
+      if (perfect) R.stats.perfect++;
+    }
+    if (fx) {
+      sfx.crowd();
       items.forEach((it, i) => popup(it.name.toUpperCase() + '  +' + it.pts, i % 2 ? '#19e3ff' : '#ffd23f', 20, px - 20, py - 70 - i * 26, i * 0.08));
       if (items.length > 1) popup('COMBO ×' + mult.toFixed(1), '#9dff3a', 24, px, py - 70 - items.length * 26 - 8, items.length * 0.08);
       popup('+' + fmt(total), '#ffffff', 40 + Math.min(16, total / 400), px, py - 70 - items.length * 26 - 44, items.length * 0.08 + 0.1);
@@ -869,34 +931,55 @@ function land(b) {
       if (perfect) { sfx.perfect(); game.flash = 0.25; }
       sfx.score(items.length + (flips ? 2 : 0));
       popScore();
+    } else if (!R.isPlayer && !game.ffwd) {
+      popup(R.name + ' +' + fmt(total), R.colors.jersey, 14, px, py - 80, 0, true);
     }
   }
-  ai.plan = null;
-  updateHud(true);
+  if (fx) updateHud(true);
 }
 
-function stepGround(b, dt, I) {
+function stepGround(R, dt, I) {
+  const b = R.b;
   b.groundT += dt;
   const sl = slopeAt(b.px), ang = Math.atan(sl);
-  const done = game.finishing && !game.demo;
-  const target = done ? 0 : speedTarget(b.px);
+  const done = R.done && !(game.demo && R.isPlayer);
+  const target = done ? 0 : speedTarget(b.px) * R.speedK;
   b.s += (-GRAV * Math.sin(ang) * 0.3 + (target - b.s) * (done ? 1.2 : 1.8)) * dt;
   b.s = clamp(b.s, done ? 0 : 150, 1000);
+  const fx = isFx(R);
+
+  // Springen: an einer Rampe wird der Absprung "geladen", auf flachem Boden gibt es einen Hüpfer
+  if (I.jumpPress) {
+    I.jumpPress = false;
+    const j = nextLip(b.px);
+    if (j && b.px > j.start - 80) { b.popT = POP_WIN; b.popWarned = false; }
+    else if (b.groundT > 0.2 && Math.abs(sl) < 0.25 && !done) {
+      b.vx = b.mvx; b.vy = b.mvy - 160;
+      if (fx) sfx.pop(false);
+      takeoff(R, b.x, b.y - 1);
+      return;
+    }
+  }
+  if (b.popT > 0) {
+    b.popT -= dt;
+    if (b.popT <= 0 && fx) popup('ZU FRÜH!', '#ff9f5a', 20, b.x, b.y - 80);
+  }
 
   // Wheelie-Steuerung
-  if (I.back) b.holdBack += dt; else b.holdBack = Math.max(0, b.holdBack - dt * 2);
+  const back = I.lean < -0.4, fwd = I.lean > 0.4;
+  if (back) b.holdBack += dt; else b.holdBack = Math.max(0, b.holdBack - dt * 2);
   let tp = 0;
-  if (I.back) tp = -0.5 - 0.2 * b.holdBack;
-  else if (I.fwd) tp = 0.06;
+  if (back) tp = -0.5 - 0.2 * b.holdBack;
+  else if (fwd) tp = 0.06;
   b.pitchVel += ((tp - b.pitch) * 70 - b.pitchVel * 12) * dt;
   b.pitch += b.pitchVel * dt;
   if (b.pitch > 0.35) b.pitch = 0.35;
-  if (b.pitch < -1.32) { crash(b, 'ÜBERSCHLAG!'); return; }
-  if (b.pitch < -0.3 && I.back) {
+  if (b.pitch < -1.32) { crash(R, 'ÜBERSCHLAG!'); return; }
+  if (b.pitch < -0.3 && back) {
     b.wheelieT += dt;
-    if (!game.demo) { game.score += 30 * dt; game.stats.wheelie += dt; }
+    if (scores(R)) { R.score += 30 * dt; R.stats.wheelie += dt; }
   } else if (b.wheelieT > 0) {
-    if (b.wheelieT >= 1 && !game.demo) popup('WHEELIE ' + b.wheelieT.toFixed(1) + 's  +' + Math.round(b.wheelieT * 30), '#ffd23f', 22, b.x, b.y - 90);
+    if (b.wheelieT >= 1 && fx) popup('WHEELIE ' + b.wheelieT.toFixed(1) + 's  +' + Math.round(b.wheelieT * 30), '#ffd23f', 22, b.x, b.y - 90);
     b.wheelieT = 0;
   }
 
@@ -919,21 +1002,38 @@ function stepGround(b, dt, I) {
     const mAng = Math.atan2(ovy, ovx);
     const la = Math.min(mAng, b.lipA * 0.92);
     const spd = Math.max(b.s, Math.hypot(ovx, ovy)) * 0.99;
-    b.vx = spd * Math.cos(la); b.vy = spd * Math.sin(la);
-    takeoff(b, xBall, yBall);
+    let vx = spd * Math.cos(la), vy = spd * Math.sin(la);
+    // An einer echten Sprungkante entscheidet das Timing über die Höhe
+    const lip = T.jumps.find((j) => b.x > j.x - 170 && b.x < j.x + 60);
+    if (lip && lip !== b.lastLip && !done) {
+      b.lastLip = lip;   // pro Kante nur einmal werten (nicht nach einem Hüpfer auf der Kante)
+      if (b.popT > 0) {
+        const perfect = POP_WIN - b.popT <= POP_PERFECT;
+        if (perfect) { vx *= 1.03; vy *= 1.08; }
+        popResult(R, perfect ? 'perfect' : 'good');
+      } else {
+        vy *= 0.45;
+        popResult(R, 'none');
+      }
+    }
+    b.vx = vx; b.vy = vy;
+    takeoff(R, xBall, yBall);
     return;
   }
 
-  // Staub
-  b.dustT -= dt;
-  if (b.dustT <= 0 && b.s > 200) {
-    b.dustT = 0.02;
-    const rx = b.x - Math.cos(b.a) * WB / 2, ry = terrainY(rx);
-    emitDirt(rx, ry, -b.s, 0, 1, false);
+  // Staub (nur beim Spieler, die Geister bleiben sauber)
+  if (R.isPlayer) {
+    b.dustT -= dt;
+    if (b.dustT <= 0 && b.s > 200) {
+      b.dustT = 0.02;
+      const rx = b.x - Math.cos(b.a) * WB / 2, ry = terrainY(rx);
+      emitDirt(rx, ry, -b.s, 0, 1, false);
+    }
   }
 }
 
-function stepAir(b, dt, I) {
+function stepAir(R, dt, I) {
+  const b = R.b;
   b.airT += dt;
   b.vy += GRAV * dt;
   b.x += b.vx * dt;
@@ -942,7 +1042,7 @@ function stepAir(b, dt, I) {
   b.s *= 1 - 0.25 * dt;
   b.maxH = Math.max(b.maxH, terrainY(b.x) - b.y);
 
-  const inp = (I.fwd ? 1 : 0) - (I.back ? 1 : 0);
+  const inp = Math.abs(I.lean) > 0.15 ? clamp(I.lean, -1, 1) : 0;
   if (inp !== 0) {
     const tw = inp * 7.6;
     b.w += (tw - b.w) * Math.min(1, dt * 7);
@@ -973,7 +1073,7 @@ function stepAir(b, dt, I) {
     const penF = fy + RW * Math.sqrt(1 + slF * slF) - terrainY(fx);
     // Kopf trifft Boden -> Crash
     const headX = b.x - 2 * c + 80 * s, headY = b.y - 2 * s - 80 * c;
-    if (headY > terrainY(headX) - 4) return crash(b, 'KOPF VORAN!');
+    if (headY > terrainY(headX) - 4) return crash(R, 'KOPF VORAN!');
     if (penR >= 0 || penF >= 0) {
       // Rad berührt den Boden: nur "landen", wenn wir uns auf den Boden zubewegen.
       // Beim Absprung (Rad dreht sich in die Rampe) schieben wir das Bike nur nach oben.
@@ -981,13 +1081,14 @@ function stepAir(b, dt, I) {
       const sl = useR ? slR : slF;
       const sq = Math.sqrt(1 + sl * sl);
       const approach = -(b.vx * sl / sq - b.vy / sq);
-      if (b.airT > 0.06 && approach > 25) land(b);
+      if (approach > 25) land(R);
       else b.y -= Math.max(penR, penF);
     }
   }
 }
 
-function stepCrash(b, dt) {
+function stepCrash(R, dt) {
+  const b = R.b;
   b.crashT += dt;
   const C = b.crash;
   for (const part of [C.bike, C.rider]) {
@@ -1000,7 +1101,7 @@ function stepCrash(b, dt) {
       part.y = gy - r;
       if (part.vy > 70) {
         part.vy *= -0.35; part.vx *= 0.72; part.w *= 0.7;
-        emitDirt(part.x, gy, part.vx, 0, 4, false);
+        if (R.isPlayer) emitDirt(part.x, gy, part.vx, 0, 4, false);
       } else part.vy = 0;
       part.vx *= 1 - 2.2 * dt;
       part.w *= 1 - 3 * dt;
@@ -1010,50 +1111,69 @@ function stepCrash(b, dt) {
   b.vx = C.rider.vx; b.vy = C.rider.vy;
   if (b.crashT > 1.7) {
     const spot = findSafeSpot(Math.max(C.bike.x, C.rider.x) + 200);
-    if (game.demo) { if (spot > T.finishX - 150) startDemo(); else placeBike(spot); return; }
-    if (game.lives > 0) {
-      if (spot > T.finishX - 200) { endGame('finish'); return; }   // Rest der Strecke übersprungen -> ins Ziel gerollt
-      placeBike(spot);
-      bike.flicker = 1.6;
-      game.streak = 0;
-      updateHud(true);
-    } else endGame('out');
+    if (game.demo && R.isPlayer) { if (spot > T.finishX - 150) startDemo(); else placeBike(b, spot); return; }
+    if (R.lives > 0) {
+      if (spot > T.finishX - 200) { placeBike(b, T.finishX + 20, R.speedK); riderFinish(R); return; }   // Rest übersprungen -> ins Ziel gerollt
+      placeBike(b, spot, R.speedK);
+      b.flicker = 1.6;
+      R.streak = 0;
+      if (isFx(R)) updateHud(true);
+    } else {
+      R.out = true;
+      if (R.isPlayer && !game.demo) endGame('out');
+    }
   }
 }
 
-function step(dt) {
-  const b = bike;
-  game.time += dt;
-  const I = game.demo ? ai : (game.finishing ? IDLE : input);
-  if (game.demo) aiUpdate(b, dt);
+function riderFinish(R) {
+  R.done = true;
+  R.bonus = R.lives * 250;
+  if (scores(R)) R.score += R.bonus;
+  if (R.isPlayer && !game.demo) onFinish();
+}
 
+function stepRider(R, dt) {
+  const b = R.b;
+  if (R.out) return;
+  let I = R.input;
+  if (R.isPlayer && !game.demo && !game.autopilot) { if (R.done) I = IDLE; }
+  else if (R.done) I = IDLE;
+  else botControl(R, R.isPlayer ? (game.demo ? 0.75 : game.autopilot) : R.skill);
+
+  if (b.mode === 'air') {
+    R.predT -= dt;
+    if (R.predT <= 0) { b.pred = predictLanding(b); R.predT = 0.03; }
+  }
   if (b.mode === 'ground') {
-    stepGround(b, dt, I);
+    stepGround(R, dt, I);
     if (b.mode === 'ground') {
       for (const k of TRICK_KEYS) b.tw[k] += (0 - b.tw[k]) * Math.min(1, dt * 12);
     }
-  } else if (b.mode === 'air') stepAir(b, dt, I);
-  else stepCrash(b, dt);
+  } else if (b.mode === 'air') stepAir(R, dt, I);
+  else stepCrash(R, dt);
+  if (R.out || R.b !== b) return;
 
   if (b.mode !== 'crash') {
     // Federung
     b.susVel += (-300 * b.sus - 15 * b.susVel) * dt;
     b.sus = clamp(b.sus + b.susVel * dt, -10, 10);
-    const targetLean = (I.fwd ? 1 : 0) - (I.back ? 1 : 0);
-    b.lean += (targetLean - b.lean) * Math.min(1, dt * 10);
+    b.lean += (clamp(I.lean, -1, 1) - b.lean) * Math.min(1, dt * 10);
     if (b.flicker > 0) b.flicker -= dt;
-    if (!game.demo) game.stats.dist = Math.max(game.stats.dist, b.px / 20);
-  }
-
-  // Ziel
-  if (game.demo) {
-    if (b.px > T.finishX - 60) startDemo();
-  } else if (game.state === 'play') {
-    if (!game.finishing && b.mode !== 'crash' && b.px >= T.finishX) onFinish();
-    if (game.finishing) {
-      game.finishT += dt;
-      if (game.finishT > (b.mode === 'air' ? 5 : 2.6)) endGame('finish');
+    if (scores(R)) R.stats.dist = Math.max(R.stats.dist, b.px / 20);
+    // Ziel
+    if (!R.done && b.px >= T.finishX) {
+      if (game.demo && R.isPlayer) { startDemo(); return; }
+      riderFinish(R);
     }
+  }
+}
+
+function step(dt) {
+  game.time += dt;
+  for (const R of riders) stepRider(R, dt);
+  if (!game.demo && game.state === 'play' && game.finishing) {
+    game.finishT += dt;
+    if (game.finishT > (bike.mode === 'air' ? 5 : 2.6)) endGame('finish');
   }
 }
 
@@ -1067,25 +1187,57 @@ function onFinish() {
 }
 
 // ===================================================================
-// Autopilot (Menü-Demo + Tests)
+// Bot-Steuerung (Gegner, Menü-Demo, Tests). skill 0..1
 // ===================================================================
-function aiUpdate(b, dt) {
-  for (const k of ['back', 'fwd', ...TRICK_KEYS]) ai[k] = false;
-  trickOrder.length = 0;
+const BOT_ORDER = ['cliff', 'nacnac', 'superman', 'cancan'];
+function shuffle(a) {
+  const r = a.slice();
+  for (let i = r.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [r[i], r[j]] = [r[j], r[i]]; }
+  return r;
+}
+function botControl(R, sk) {
+  const b = R.b, I = R.input;
+  I.lean = 0;
+  for (const k of TRICK_KEYS) I[k] = false;
+  I.order.length = 0;
+  if (b.mode === 'ground') {
+    // Absprung-Timing an der nächsten Kante
+    const j = nextLip(b.px);
+    if (j && b.px > j.start - 80 && b.popT <= 0) {
+      if (R.popFor !== j) {
+        R.popFor = j;
+        R.popAt = Math.random() < 0.55 + sk * 0.45 ? rand(0.06, 0.15 + (1 - sk) * 0.3) : -1;
+      }
+      const ttl = (j.x - 40 - b.px) / Math.max(b.s, 50);
+      if (R.popAt > 0 && ttl <= R.popAt) { I.jumpPress = true; R.popAt = 0; }
+    }
+    return;
+  }
   if (b.mode !== 'air') return;
-  if (!ai.plan) {
-    const flipOK = b.pred.t > 1.05;
-    ai.plan = {
-      trick: Math.random() < 0.8 ? TRICK_KEYS[(Math.random() * 4) | 0] : null,
-      flip: flipOK && Math.random() < 0.45 ? (Math.random() < 0.6 ? -1 : 1) : 0,
-      holdFrom: rand(0.12, 0.3),
+  if (!R.plan) {
+    const total = b.pred.t;
+    const slots = clamp(Math.floor((total - 0.55) / 0.5), 0, 4);
+    const nT = clamp(Math.round(slots * (0.4 + 0.6 * sk) + rand(-0.4, 0.4)), 0, slots);
+    let flip = 0;
+    if (total > 1.45 && Math.random() < 0.25 + 0.7 * sk) flip = total > 2.3 && sk > 0.85 ? 2 : 1;
+    R.plan = {
+      flip, dir: total > 1.7 && Math.random() < sk ? 1 : -1,
+      tricks: (sk > 0.85 ? BOT_ORDER : shuffle(BOT_ORDER)).slice(0, nT),
+      margin: Math.random() < (1 - sk) * 0.12 ? 0.18 : 0.5 + (1 - sk) * 0.3 * Math.random(),
     };
   }
-  const p = ai.plan;
+  const p = R.plan;
   const turns = flipTurns(b, Math.atan(b.pred.slope));
-  if (p.flip < 0 && turns > -0.8 && b.airT > 0.05) ai.back = true;
-  if (p.flip > 0 && turns < 0.8 && b.airT > 0.05) ai.fwd = true;
-  if (p.trick && b.airT > p.holdFrom && b.pred.t > 0.55) { ai[p.trick] = true; trickOrder.push(p.trick); }
+  if (p.flip) {
+    if (p.dir < 0 && turns > -(p.flip - 0.22)) I.lean = -1;
+    if (p.dir > 0 && turns < (p.flip - 0.22)) I.lean = 1;
+  }
+  const t = b.airT;
+  const slot = Math.floor((t - 0.15) / 0.5), inSlot = ((t - 0.15) % 0.5) < 0.44;
+  if (t > 0.15 && b.pred.t > p.margin && inSlot && slot < p.tricks.length) {
+    const k = p.tricks[slot];
+    I[k] = true; I.order.push(k);
+  }
 }
 
 // ===================================================================
@@ -1112,7 +1264,7 @@ function resize() {
   g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
   view.vignette = vg;
 }
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); stickHome(stickL); stickHome(stickR); });
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 
 function snapCamera() {
@@ -1519,7 +1671,7 @@ function drawPopups(c) {
     if (p.delay > 0) continue;
     const k = clamp(p.life / p.max, 0, 1);
     const pop = 1 + Math.max(0, (k - 0.85) * 5);
-    c.globalAlpha = Math.min(1, k * 2.2);
+    c.globalAlpha = Math.min(1, k * 2.2) * (p.ghost ? 0.7 : 1);
     c.font = `900 italic ${Math.round(p.size * pop)}px "Arial Black", Impact, sans-serif`;
     c.lineWidth = Math.max(4, p.size * 0.22);
     const half = c.measureText(p.text).width / 2 + 8;
@@ -1530,7 +1682,9 @@ function drawPopups(c) {
   c.globalAlpha = 1;
 }
 
-function drawBike(c, b) {
+function drawBike(c, R) {
+  const b = R.b;
+  CUR = R.colors;
   if (b.mode === 'crash') {
     const C = b.crash;
     c.save(); c.translate(C.bike.x, C.bike.y); c.rotate(C.bike.a); drawCrashedBike(c, b.crashT); c.restore();
@@ -1540,13 +1694,50 @@ function drawBike(c, b) {
   if (b.flicker > 0 && Math.floor(b.flicker * 14) % 2 === 0) c.globalAlpha = 0.35;
   c.save();
   c.translate(b.x, b.y); c.rotate(b.a);
-  if (pal.stars > 0.3) { // Neon-Unterboden
+  if (R.isPlayer && pal.stars > 0.3) { // Neon-Unterboden
     const g = c.createRadialGradient(0, 8, 4, 0, 8, 70);
     g.addColorStop(0, `rgba(25,227,255,${0.35 * pal.stars})`); g.addColorStop(1, 'rgba(25,227,255,0)');
     c.fillStyle = g; c.fillRect(-80, -50, 160, 120);
   }
   drawMoto(c, b);
   c.restore();
+  c.globalAlpha = 1;
+}
+
+// Gegner als Geister: erst deckend auf eine eigene Ebene, dann halbtransparent drüber
+let ghostCv = null, gctx = null;
+function drawGhosts(c, Z, ox, oy) {
+  const bots = riders.filter((r) => !r.isPlayer && !r.out);
+  if (!bots.length) return;
+  const dpr = view.dpr;
+  if (!ghostCv || ghostCv.width !== cv.width || ghostCv.height !== cv.height) {
+    ghostCv = document.createElement('canvas');
+    ghostCv.width = cv.width; ghostCv.height = cv.height;
+    gctx = ghostCv.getContext('2d');
+  }
+  gctx.setTransform(1, 0, 0, 1, 0, 0);
+  gctx.clearRect(0, 0, ghostCv.width, ghostCv.height);
+  gctx.setTransform(Z * dpr, 0, 0, Z * dpr, (-view.camX * Z + ox) * dpr, (-view.camY * Z + oy) * dpr);
+  for (const R of bots) drawBike(gctx, R);
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 0.45;
+  c.drawImage(ghostCv, 0, 0);
+  c.restore();
+  // Namensschilder
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = '900 13px "Arial Black", Arial, sans-serif';
+  for (const R of bots) {
+    const b = R.b;
+    const x = b.mode === 'crash' ? b.crash.rider.x : b.x, y = (b.mode === 'crash' ? b.crash.rider.y : b.y) - 112;
+    const label = R.name + ' · ' + fmt(R.score);
+    const w = c.measureText(label).width + 16;
+    c.globalAlpha = 0.8;
+    c.fillStyle = 'rgba(10,6,30,.7)';
+    c.beginPath(); c.roundRect ? c.roundRect(x - w / 2, y - 11, w, 22, 11) : c.rect(x - w / 2, y - 11, w, 22); c.fill();
+    c.fillStyle = R.colors.jersey; c.fillRect(x - w / 2 + 6, y - 4, 4, 8);
+    c.fillStyle = '#fff'; c.fillText(label, x + 3, y + 1);
+  }
   c.globalAlpha = 1;
 }
 
@@ -1573,7 +1764,8 @@ function render(dt) {
   drawWorldProps(c, x0, x1);
   drawBikeShadow(c, bike);
   drawParticles(c);
-  drawBike(c, bike);
+  drawGhosts(c, Z, ox, oy);
+  drawBike(c, player);
   drawPopups(c);
 
   // Screen-Space-Effekte
@@ -1599,7 +1791,7 @@ function render(dt) {
 // ===================================================================
 const el = {
   hud: $('hud'), score: $('hud-score'), best: $('hud-best'), goal: $('hud-goal'), dist: $('hud-dist'), bar: $('hud-bar'),
-  streak: $('hud-streak'), lives: $('hud-lives'), combo: $('combo'), warn: $('warn'), banner: $('banner'), hint: $('hint'), controls: $('controls'),
+  streak: $('hud-streak'), lives: $('hud-lives'), board: $('board'), jumpcue: $('jumpcue'), combo: $('combo'), warn: $('warn'), banner: $('banner'), hint: $('hint'), controls: $('controls'),
 };
 let lastHud = {};
 function popScore() {
@@ -1631,6 +1823,17 @@ function updateHud(force) {
   }
   const st = game.streak > 0 ? '🔥 STREAK ×' + streakMult().toFixed(1) : '';
   if (force || L.streak !== st) { el.streak.textContent = st; L.streak = st; }
+  // Live-Rangliste gegen die Bots (max. 4x pro Sekunde)
+  if (force || !(game.time - (L.boardT || -1) < 0.25)) {
+    L.boardT = game.time;
+    const rank = riders.slice().sort((a, b) => b.score - a.score);
+    const key = rank.map((r) => r.name + Math.floor(r.score)).join('|');
+    if (force || L.board !== key) {
+      el.board.innerHTML = rank.map((r, i) => '<div class="br' + (r.isPlayer ? ' me' : '') + (r.out ? ' out' : '') + '"><span class="dot" style="background:' +
+        r.colors.jersey + '"></span>' + (i + 1) + '. ' + (r.isPlayer ? 'Du' : r.name) + '<b>' + fmt(Math.floor(r.score)) + '</b></div>').join('');
+      L.board = key;
+    }
+  }
   const lv = game.lives;
   if (force || L.lives !== lv) {
     let h = '';
@@ -1650,6 +1853,21 @@ function updateCombo() {
     key = html;
     warn = poseWeight(b) > 0.3 && b.pred.t < 0.5;
   }
+  // Hinweis zum Absprung an der Rampe
+  let cue = 0;
+  if (!game.demo && b.mode === 'ground' && !player.done) {
+    const j = nextLip(b.px);
+    if (j && b.px > j.start - 80) {
+      if (b.popT > 0) cue = 2;
+      else if ((j.x - 40 - b.px) / Math.max(b.s, 50) < 0.75) cue = 1;
+    }
+  }
+  if (cue !== lastHud.cue) {
+    lastHud.cue = cue;
+    el.jumpcue.classList.toggle('hidden', !cue);
+    el.jumpcue.classList.toggle('armed', cue === 2);
+    el.jumpcue.textContent = cue === 2 ? '✓ GELADEN' : '▲ SPRING!';
+  }
   if (key !== lastHud.combo) {
     lastHud.combo = key;
     el.combo.innerHTML = html;
@@ -1666,7 +1884,8 @@ function showScreen(name) {
 function setPlayUI(on) {
   el.hud.classList.toggle('hidden', !on);
   el.controls.classList.toggle('hidden', !on);
-  if (!on) { el.banner.classList.add('hidden'); el.combo.classList.add('hidden'); el.warn.classList.add('hidden'); el.hint.classList.add('hidden'); }
+  if (on) { stickHome(stickL); stickHome(stickR); }
+  if (!on) { el.jumpcue.classList.add('hidden'); lastHud.cue = 0; el.banner.classList.add('hidden'); el.combo.classList.add('hidden'); el.warn.classList.add('hidden'); el.hint.classList.add('hidden'); }
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 const medalsHtml = (n) => [1, 2, 3].map((i) => '<span class="mdl' + (i <= n ? ' got' : '') + '">' + MEDAL_ICON[i] + '</span>').join('');
@@ -1729,7 +1948,9 @@ function startDemo() {
   game.demo = true;
   buildTrack(TRACKS[game.demoIdx++ % TRACKS.length]);
   updatePalette();
-  placeBike(findSafeSpot(900));
+  riders = [player];
+  resetRider(player);
+  placeBike(bike, findSafeSpot(900));
   view.zoom = 1; snapCamera();
   parts.length = 0; popups.length = 0;
 }
@@ -1739,29 +1960,36 @@ function startGame(trackId) {
   const def = trackById(trackId || game.trackId);
   game.trackId = def.id;
   store.data.lastTrack = def.id; store.save();
-  input.back = input.fwd = false; TRICK_KEYS.forEach((k) => (input[k] = false)); trickOrder = [];
-  document.querySelectorAll('.ctl').forEach((b) => b.classList.remove('active'));
+  releaseAll();
   game.demo = false;
   game.state = 'play';
-  game.score = 0; game.dispScore = 0; game.lives = LIVES; game.streak = 0;
+  game.dispScore = 0;
   game.time = 0; game.timeScale = 1; game.slowT = 0; game.shake = 0; game.flash = 0; game.cheer = 0;
-  game.finishing = false; game.finishT = 0; game.finishBonus = 0;
+  game.finishing = false; game.finishT = 0;
   el.banner.classList.add('hidden');
-  game.stats = newStats(); game.newRecord = false; game.runEntry = null;
+  game.newRecord = false; game.runEntry = null;
   buildTrack(def);
   updatePalette();
-  placeBike(250);
+  // Spieler + 3 Bot-Gegner (Geister). Die Bots starten leicht versetzt dahinter.
+  resetRider(player);
+  placeBike(bike, 250);
+  const skills = BOT_SKILL[def.stars] || BOT_SKILL[1];
+  riders = [player, ...BOT_DEFS.map((d, i) => {
+    const R = newRider({ name: d.name, colors: d.colors, skill: skills[i], speedK: 0.985 + i * 0.015 });
+    placeBike(R.b, 250 - (i + 1) * 70, R.speedK);
+    return R;
+  })];
   parts.length = 0; popups.length = 0;
   view.zoom = 1; snapCamera();
   lastHud = {};
   showScreen(null);
   setPlayUI(true);
   updateHud(true);
-  if (!store.data.seenHint) {
-    el.hint.innerHTML = '← Links: <b>neigen / Wheelie</b> &nbsp;·&nbsp; Rechts: <b>Tricks halten</b>, vor der Landung <b>loslassen</b>!';
+  if (!store.data.seenHint2) {
+    el.hint.innerHTML = 'Linker Stick: <b>← → neigen</b>, <b>↑ springen</b> (kurz vor der Rampenkante!)<br>Rechter Stick: <b>Richtung = Trick</b> halten, vor der Landung loslassen';
     el.hint.classList.remove('hidden');
-    setTimeout(() => el.hint.classList.add('hidden'), 7000);
-    store.data.seenHint = true; store.save();
+    setTimeout(() => el.hint.classList.add('hidden'), 8000);
+    store.data.seenHint2 = true; store.save();
   }
 }
 
@@ -1769,15 +1997,23 @@ function endGame(reason) {
   if (game.state === 'over') return;
   game.state = 'over';
   setPlayUI(false);
+  releaseAll();
+  // Bots, die noch unterwegs sind, im Schnelldurchlauf ins Ziel bringen
+  game.ffwd = true;
+  for (let i = 0; i < 120 * 300 && riders.some((r) => !r.isPlayer && !r.done && !r.out); i++) {
+    for (const R of riders) if (!R.isPlayer) stepRider(R, FIXED_DT);
+  }
+  game.ffwd = false;
   const def = T.def;
   const finished = reason === 'finish';
-  game.finishBonus = finished ? game.lives * 250 : 0;
-  game.score += game.finishBonus;
   const sc = Math.floor(game.score);
+  const ranking = riders.slice().sort((a, b) => b.score - a.score);
+  const place = ranking.indexOf(player) + 1;
   const rec = store.trackRec(def.id);
   const prevBest = rec.best;
   const prevMedal = medalFor(prevBest, def);
   game.newRecord = sc > prevBest && sc > 0;
+  if (place === 1) rec.wins = (rec.wins || 0) + 1;
   let id = null;
   if (sc > 0) {
     id = Date.now();
@@ -1791,7 +2027,7 @@ function endGame(reason) {
   const S = game.stats;
   const info = trackInfo(def);
   const medal = medalFor(sc, def);
-  $('over-title').textContent = finished ? '🏁 Ziel erreicht!' : 'Ausgeschieden';
+  $('over-title').textContent = place === 1 ? '🏆 Sieg!' : finished ? '🏁 Platz ' + place + ' von ' + riders.length : 'Ausgeschieden – Platz ' + place;
   $('over-track').textContent = def.name;
   $('over-score').textContent = fmt(sc);
   $('over-badge').classList.toggle('hidden', !game.newRecord);
@@ -1804,19 +2040,25 @@ function endGame(reason) {
     '<span>Sprünge <b>' + S.jumps + ' / ' + info.jumps + '</b></span>' +
     '<span>Beste Combo <b>' + fmt(S.bestCombo) + '</b></span>' +
     '<span>Flips <b>' + S.flips + '</b></span>' +
-    '<span>Längste Luft <b>' + S.maxAir.toFixed(1) + ' s</b></span>' +
+    '<span>Perfect Pops <b>' + S.pops + '</b></span>' +
     '<span>Perfekte Landungen <b>' + S.perfect + '</b></span>' +
-    (game.finishBonus ? '<span>Ziel-Bonus <b>+' + fmt(game.finishBonus) + '</b></span>' : '');
+    (player.bonus ? '<span>Ziel-Bonus <b>+' + fmt(player.bonus) + '</b></span>' : '');
+  $('over-race').innerHTML = ranking.map((R, i) =>
+    '<div class="race-row' + (R.isPlayer ? ' me' : '') + '"><span class="rk">' + (i + 1) + '.</span>' +
+    '<span class="dot" style="background:' + R.colors.jersey + '"></span>' +
+    '<span class="nm">' + escapeHtml(R.isPlayer ? 'Du' : R.name) + (R.out ? ' <small>(raus)</small>' : '') + '</span>' +
+    '<span class="sc">' + fmt(R.score) + '</span></div>').join('');
   renderScores($('over-table'), def.id, { limit: 5, highlight: id });
   const idx = TRACKS.indexOf(trackById(def.id));
   const next = TRACKS[idx + 1];
   $('btn-next').classList.toggle('hidden', !next);
   $('btn-next').dataset.track = next ? next.id : '';
   game.demo = true;
-  placeBike(findSafeSpot(bike.px + 300));
+  riders = [player];
+  placeBike(bike, findSafeSpot(bike.px + 300));
   snapCamera();
   showScreen('over');
-  if (game.newRecord) sfx.record(); else sfx.over();
+  if (place === 1 || game.newRecord) sfx.record(); else sfx.over();
   updateMenuInfo();
 }
 
@@ -1847,62 +2089,137 @@ function openTracks() {
 // ===================================================================
 // Eingabe
 // ===================================================================
-const ACTIONS = ['back', 'fwd', ...TRICK_KEYS];
-function setAct(act, down) {
-  if (game.state !== 'play') down = false;
-  if (input[act] === down) return;
-  input[act] = down;
-  if (down) el.hint.classList.add('hidden');
-  if (TRICK_KEYS.includes(act)) {
-    trickOrder = trickOrder.filter((k) => k !== act);
-    if (down) { trickOrder.push(act); if (bike.mode === 'air') sfx.trick(); }
-  }
-  const btn = document.querySelector('.ctl[data-act="' + act + '"]');
-  if (btn) btn.classList.toggle('active', down);
-}
-function releaseAll() { ACTIONS.forEach((a) => setAct(a, false)); }
+// ---------- Virtuelle Sticks ----------
+// Linker Stick: ← → neigen (analog), ↑ springen. Rechter Stick: Richtung wählt den Trick.
+// Die Sticks erscheinen dort, wo der Daumen aufsetzt (jeweils linke / rechte Bildschirmhälfte).
+const stickL = { el: $('stick-l'), zone: $('zone-l'), id: null, x: 0, y: 0, latch: false };
+const stickR = { el: $('stick-r'), zone: $('zone-r'), id: null, x: 0, y: 0, trick: null };
+for (const st of [stickL, stickR]) st.knob = st.el.querySelector('.knob');
 
-document.querySelectorAll('.ctl').forEach((btn) => {
-  const act = btn.dataset.act;
-  btn.addEventListener('pointerdown', (e) => {
+function placeStick(st, cx, cy) {
+  const r = st.el.offsetWidth / 2;
+  st.cx = cx; st.cy = cy;
+  st.el.style.left = (cx - r) + 'px';
+  st.el.style.top = (cy - r) + 'px';
+}
+function stickHome(st) {
+  const r = (st.el.offsetWidth || 120) / 2;
+  const m = 22 + r;
+  placeStick(st, st === stickL ? m + 8 : view.W - m - 8, view.H - m);
+}
+function moveStick(st, e, onChange) {
+  const r = st.el.offsetWidth / 2;
+  let dx = e.clientX - st.cx, dy = e.clientY - st.cy;
+  const m = Math.hypot(dx, dy);
+  if (m > r) { dx *= r / m; dy *= r / m; }
+  st.knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  st.x = dx / r; st.y = dy / r;
+  onChange(st.x, st.y);
+}
+function releaseStick(st, onChange) {
+  if (st.id !== null) { try { st.zone.releasePointerCapture(st.id); } catch (err) { /* ignore */ } }
+  st.id = null; st.x = st.y = 0;
+  st.knob.style.transform = '';
+  st.el.classList.remove('active');
+  stickHome(st);
+  onChange(0, 0);
+}
+function bindStick(st, onChange) {
+  st.zone.addEventListener('pointerdown', (e) => {
+    if (st.id !== null || game.state !== 'play') return;
     e.preventDefault();
     sfx.init();
-    try { btn.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-    setAct(act, true);
+    el.hint.classList.add('hidden');
+    st.id = e.pointerId;
+    try { st.zone.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    const r = st.el.offsetWidth / 2;
+    placeStick(st, clamp(e.clientX, r + 6, view.W - r - 6), clamp(e.clientY, r + 60, view.H - r - 6));
+    st.el.classList.add('active');
+    moveStick(st, e, onChange);
   });
-  const up = (e) => { e.preventDefault(); setAct(act, false); };
-  btn.addEventListener('pointerup', up);
-  btn.addEventListener('pointercancel', up);
-  btn.addEventListener('lostpointercapture', () => setAct(act, false));
-  btn.addEventListener('contextmenu', (e) => e.preventDefault());
-});
+  st.zone.addEventListener('pointermove', (e) => { if (e.pointerId === st.id) { e.preventDefault(); moveStick(st, e, onChange); } });
+  const end = (e) => { if (e.pointerId === st.id) releaseStick(st, onChange); };
+  st.zone.addEventListener('pointerup', end);
+  st.zone.addEventListener('pointercancel', end);
+  st.zone.addEventListener('lostpointercapture', end);
+  st.zone.addEventListener('contextmenu', (e) => e.preventDefault());
+}
 
-const KEYMAP = {
-  ArrowLeft: 'back', a: 'back', A: 'back',
-  ArrowRight: 'fwd', d: 'fwd', D: 'fwd',
-  z: 'cancan', Z: 'cancan', y: 'cancan', Y: 'cancan',
-  x: 'superman', X: 'superman', ArrowUp: 'superman',
-  c: 'nacnac', C: 'nacnac',
-  v: 'cliff', V: 'cliff', ArrowDown: 'cliff',
+function onLeftStick(x, y) {
+  const dz = 0.2;
+  input.lean = Math.abs(x) < dz ? 0 : Math.sign(x) * (Math.abs(x) - dz) / (1 - dz);
+  if (y < -0.6 && !stickL.latch) { stickL.latch = true; pressJump(); }
+  if (y > -0.35) stickL.latch = false;
+  stickL.el.querySelector('.lbl.up').classList.toggle('on', stickL.latch);
+  stickL.el.querySelector('.lbl.left').classList.toggle('on', input.lean < -0.3);
+  stickL.el.querySelector('.lbl.right').classList.toggle('on', input.lean > 0.3);
+}
+function onRightStick(x, y) {
+  let t = null;
+  if (Math.hypot(x, y) > 0.5) t = Math.abs(x) > Math.abs(y) ? (x > 0 ? 'cliff' : 'nacnac') : (y < 0 ? 'superman' : 'cancan');
+  setTrick(t);
+}
+function pressJump() {
+  if (game.state !== 'play') return;
+  input.jumpPress = true;
+}
+function setTrick(t) {
+  if (game.state !== 'play') t = null;
+  if (stickR.trick === t) return;
+  stickR.trick = t;
+  for (const k of TRICK_KEYS) input[k] = k === t;
+  input.order = t ? [t] : [];
+  if (t && bike.mode === 'air') sfx.trick();
+  stickR.el.querySelectorAll('.lbl').forEach((l) => l.classList.toggle('on', l.dataset.t === t));
+}
+bindStick(stickL, onLeftStick);
+bindStick(stickR, onRightStick);
+
+// ---------- Tastatur ----------
+const keyState = { left: false, right: false, tricks: [] };
+const TRICK_KEYMAP = {
+  i: 'superman', x: 'superman', l: 'cliff', v: 'cliff', k: 'cancan', z: 'cancan', y: 'cancan', j: 'nacnac', c: 'nacnac',
 };
+function updateKeyLean() { input.lean = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0); }
+function releaseAll() {
+  keyState.left = keyState.right = false; keyState.tricks = [];
+  input.lean = 0; input.jumpPress = false;
+  setTrick(null);
+  if (stickL.id !== null) releaseStick(stickL, onLeftStick);
+  if (stickR.id !== null) releaseStick(stickR, onRightStick);
+}
+
 window.addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   sfx.init();
-  if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+  const k = e.key;
+  if (k === 'p' || k === 'P' || k === 'Escape') {
     if (game.state === 'play') pauseGame(); else if (game.state === 'paused') resumeGame();
     return;
   }
-  if (e.key === 'Enter' || e.key === ' ') {
-    if (game.state === 'over') { e.preventDefault(); startGame(); return; }
-    if (game.state === 'menu' && $('screen-menu').classList.contains('active')) { e.preventDefault(); openTracks(); return; }
-    if (game.state === 'paused') { resumeGame(); return; }
+  if (game.state !== 'play') {
+    if (k === 'Enter' || k === ' ') {
+      if (game.state === 'over') { e.preventDefault(); startGame(); return; }
+      if (game.state === 'menu' && $('screen-menu').classList.contains('active')) { e.preventDefault(); openTracks(); return; }
+      if (game.state === 'paused') { resumeGame(); return; }
+    }
+    return;
   }
-  const act = KEYMAP[e.key];
-  if (act) { e.preventDefault(); if (!e.repeat) setAct(act, true); }
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') { e.preventDefault(); keyState.left = true; updateKeyLean(); return; }
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') { e.preventDefault(); keyState.right = true; updateKeyLean(); return; }
+  if (k === 'ArrowUp' || k === 'w' || k === 'W' || k === ' ') { e.preventDefault(); if (!e.repeat) pressJump(); return; }
+  const t = TRICK_KEYMAP[k.toLowerCase()];
+  if (t) {
+    e.preventDefault();
+    if (!e.repeat) { keyState.tricks = keyState.tricks.filter((x) => x !== t); keyState.tricks.push(t); setTrick(t); }
+  }
 });
 window.addEventListener('keyup', (e) => {
-  const act = KEYMAP[e.key];
-  if (act) setAct(act, false);
+  const k = e.key;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') { keyState.left = false; updateKeyLean(); return; }
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') { keyState.right = false; updateKeyLean(); return; }
+  const t = TRICK_KEYMAP[k.toLowerCase()];
+  if (t) { keyState.tricks = keyState.tricks.filter((x) => x !== t); setTrick(keyState.tricks[keyState.tricks.length - 1] || null); }
 });
 window.addEventListener('blur', () => { releaseAll(); pauseGame(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { releaseAll(); pauseGame(); } });
@@ -1928,7 +2245,6 @@ $('btn-next').addEventListener('click', () => { sfx.click(); startGame($('btn-ne
 // ===================================================================
 let last = performance.now();
 let acc = 0;
-let predTimer = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -1942,8 +2258,6 @@ function frame(now) {
     if (game.slowT > 0) { game.slowT -= dt; game.timeScale += (0.35 - game.timeScale) * Math.min(1, dt * 12); }
     else game.timeScale += (1 - game.timeScale) * Math.min(1, dt * 6);
 
-    predTimer -= dt;
-    if (bike.mode === 'air' && predTimer <= 0) { bike.pred = predictLanding(bike); predTimer = 0.03; }
 
     acc += dt * game.timeScale;
     let n = 0;
@@ -1965,7 +2279,7 @@ function frame(now) {
     // Motor-Sound
     const b = bike;
     if (game.state === 'play' && b.mode !== 'crash') {
-      const rpm = b.mode === 'air' ? 0.9 + 0.08 * Math.sin(game.time * 40) : clamp(b.s / 900, 0.15, 1) + (input.back ? 0.1 : 0);
+      const rpm = b.mode === 'air' ? 0.9 + 0.08 * Math.sin(game.time * 40) : clamp(b.s / 900, 0.15, 1) + (input.lean < -0.4 ? 0.1 : 0);
       sfx.engine(rpm, true);
     } else sfx.engine(0, false);
   }
@@ -1976,6 +2290,7 @@ function frame(now) {
 // Start
 // ===================================================================
 resize();
+stickHome(stickL); stickHome(stickR);
 updateSoundBtn();
 updateMenuInfo();
 startDemo();
@@ -1986,5 +2301,5 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 
 // Debug / Tests
-window.FMX = { game, bike, input, ai, T, TRACKS, buildTrack, trackInfo, medalFor, endGame, step, predictLanding, startGame, terrainY, slopeAt, setAct, store, view, pal, get parts() { return parts; } };
+window.FMX = { game, bike, player, snapCamera, get riders() { return riders; }, input, setTrick, pressJump, T, TRACKS, buildTrack, trackInfo, medalFor, endGame, step, predictLanding, startGame, terrainY, slopeAt, store, view, pal, get parts() { return parts; }, get popups() { return popups; } };
 })();

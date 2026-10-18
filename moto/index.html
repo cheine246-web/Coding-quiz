@@ -34,6 +34,7 @@
       <div id="hud-lives"></div>
       <button id="btn-pause" aria-label="Pause">❚❚</button>
     </div>
+    <div id="board"></div>
   </div>
 
   <div id="combo" class="hidden"></div>
@@ -41,18 +42,24 @@
   <div id="banner" class="hidden"></div>
   <div id="hint" class="hidden"></div>
 
-  <!-- Touch controls -->
+  <!-- Touch-Sticks -->
   <div id="controls" class="hidden">
-    <div id="pad-left">
-      <button class="ctl round" data-act="back"><span class="ico">↶</span><small>HINTEN</small></button>
-      <button class="ctl round" data-act="fwd"><span class="ico">↷</span><small>VORN</small></button>
+    <div id="zone-l" class="stick-zone"></div>
+    <div id="zone-r" class="stick-zone"></div>
+    <div id="stick-l" class="stick">
+      <div class="knob"></div>
+      <span class="lbl up">▲ SPRUNG</span>
+      <span class="lbl left">↶</span>
+      <span class="lbl right">↷</span>
     </div>
-    <div id="pad-right">
-      <button class="ctl trick t-super" data-act="superman"><b>SUPERMAN</b><small>+250</small></button>
-      <button class="ctl trick t-cliff" data-act="cliff"><b>CLIFFHANGER</b><small>+500</small></button>
-      <button class="ctl trick t-can" data-act="cancan"><b>CAN-CAN</b><small>+150</small></button>
-      <button class="ctl trick t-nac" data-act="nacnac"><b>NAC-NAC</b><small>+350</small></button>
+    <div id="stick-r" class="stick trickstick">
+      <div class="knob"></div>
+      <span class="lbl up" data-t="superman">SUPERMAN</span>
+      <span class="lbl right" data-t="cliff">CLIFF</span>
+      <span class="lbl down" data-t="cancan">CAN-CAN</span>
+      <span class="lbl left" data-t="nacnac">NAC-NAC</span>
     </div>
+    <div id="jumpcue" class="hidden">▲ SPRING!</div>
   </div>
 
   <!-- MENU -->
@@ -91,15 +98,13 @@
         <div class="howto-col">
           <h3>Steuerung</h3>
           <ul class="plain">
-            <li><b>Gas</b> gibt dein Bike automatisch.</li>
-            <li><b>↶ HINTEN</b> am Boden = Wheelie, in der Luft = Backflip.</li>
-            <li><b>↷ VORN</b> in der Luft = Frontflip / Nase senken.</li>
-            <li><b>Trick-Buttons</b> in der Luft <u>gedrückt halten</u> – und <u>vor der Landung loslassen</u>!</li>
-            <li>Lande mit den Rädern auf dem Boden, sonst Crash. Du hast 3 Leben.</li>
-            <li>Jede Strecke ist <b>fest</b> und endet im Ziel. Hol dabei so viele Punkte wie möglich – für 🥉 🥈 🥇 und deinen Rekord!</li>
-            <li>Übrige Leben geben im Ziel <b>+250</b> pro Herz.</li>
+            <li><b>Linker Stick</b>: ← → neigen (am Boden Wheelie, in der Luft Back-/Frontflip), <b>↑ springen</b>.</li>
+            <li><b>Springen</b>: Drück ↑ kurz vor der Rampenkante – je knapper, desto höher (<b>Perfect Pop +100</b>). Ohne Absprung fliegst du kaum.</li>
+            <li><b>Rechter Stick</b>: Richtung wählt den Trick (↑ Superman, → Cliffhanger, ↓ Can-Can, ← Nac-Nac). Halten – und <u>vor der Landung loslassen</u>!</li>
+            <li>Du fährst gegen <b>3 Bots</b> (halbtransparent). Wer im Ziel die meisten Punkte hat, gewinnt.</li>
+            <li>Lande auf den Rädern, sonst Crash. 3 Leben, übrige Herzen geben im Ziel +250.</li>
           </ul>
-          <p class="keys">Tastatur: ← → = Neigen · Z X C V = Tricks · P = Pause</p>
+          <p class="keys">Tastatur: ← → neigen · ↑ / Leertaste springen · I L K J = Tricks (wie der Stick) · P = Pause</p>
         </div>
         <div class="howto-col">
           <h3>Punkte</h3>
@@ -163,6 +168,8 @@
           </div>
         </div>
         <div class="over-right">
+          <h3>Rennergebnis</h3>
+          <div id="over-race" class="over-race"></div>
           <h3>Top 5 dieser Strecke · Namen antippen</h3>
           <div id="over-table"></div>
         </div>
